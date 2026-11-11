@@ -223,6 +223,14 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
     @auto_assemble
     def handle(cls, method: str, keys: Tuple[str, ...], options: dict):
         if cls._decide_handle(method, keys, options):
+            if method in {'auto', 'a'}:
+                # url已按pattern匹配到本站点：自动选择主下载方法（优先get_video）
+                if 'get_video' in cls._cli_map:
+                    method = 'get_video'
+                elif 'get_series' in cls._cli_map:
+                    method = 'get_series'
+                else:
+                    method = next(iter(cls._cli_map))
             try:
                 method = cls._cli_map[method]
             except KeyError:

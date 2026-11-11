@@ -1,22 +1,30 @@
 # bx.py —— bilix 便捷启动器
 
-`bx.py` 是仓库根目录下的一个单文件脚本，把 `bilix` 命令行包装得更顺手。核心改进：**cookie 只需配置一次，之后每次下载自动注入**，并额外支持从浏览器一键导入、登录状态检查、默认下载目录/画质记忆。
+`bx.py` 是仓库根目录下的一个单文件脚本，把 `bilix` 命令行包装得更顺手。核心改进：**cookie 只需配置一次，之后每次下载自动注入**，并额外支持从浏览器一键导入、登录状态检查、默认下载目录/画质记忆、站点健康自检。
 
 ## 快速开始
 
 ```bash
-# 1. 配置cookie（二选一）
+# 1. 配置cookie（二选一，B站下载需要；其他平台无需登录）
 python bx.py login                    # 交互式：粘贴SESSDATA，或回车后从浏览器导入
 python bx.py login --browser chrome   # 直接从浏览器读取cookie
 python bx.py login --sessdata "..."   # 非交互式（适合脚本）
 
-# 2. 下载
-python bx.py v "https://www.bilibili.com/video/BV1GJ411x7h7"      # 单视频
+# 2. 下载（url自动识别站点，支持 bilibili/douyin/tiktok/youtube/cctv/jable）
+python bx.py v "https://www.bilibili.com/video/BV1GJ411x7h7"      # B站单视频
 python bx.py "https://space.bilibili.com/946974" -n 5              # 直接丢url，自动识别
 python bx.py s "https://www.bilibili.com/bangumi/play/ss48267" -p 1 3   # 番剧P1~P3
 python bx.py up 946974 -n 10 --keyword 教程                        # UP主投稿
 python bx.py fav 69370754 -n 10                                    # 收藏夹
 python bx.py cate 连载动画 -n 10                                    # 分区
+python bx.py v "https://www.douyin.com/video/xxx"                  # 抖音（无水印）
+python bx.py "https://www.tiktok.com/@user/video/xxx"              # TikTok
+python bx.py v "https://www.youtube.com/watch?v=xxx"               # YouTube（自动HLS高清）
+
+# 3. 站点健康自检（接口漂移排查）
+python bx.py doctor                       # 全量巡检
+python bx.py doctor --site youtube        # 只查某站点
+python bx.py doctor --json                # JSON输出（便于CI）
 ```
 
 ## 方法与别名
@@ -30,7 +38,7 @@ python bx.py cate 连载动画 -n 10                                    # 分区
 | `cate` | 分区 | get_cate |
 | `col` / `collect` | 合集/视频列表 | get_collect |
 | `info` | 查看资源详情 | info |
-| （直接传 url） | 自动识别类型 | auto |
+| （直接传 url） | 自动识别站点与类型（bilibili/douyin/tiktok/youtube/cctv/jable） | auto |
 
 `bilix` 原有的全部选项（`-q` 画质、`-n` 数量、`--dm` 弹幕、`--subtitle` 字幕、`-oa` 仅音频、`--dm` 弹幕、`-sl` 限速等）原样可用。
 
@@ -42,6 +50,11 @@ python bx.py cate 连载动画 -n 10                                    # 分区
 | `python bx.py login --browser chrome` | 从指定浏览器读取（支持 chrome/edge/firefox/safari/opera/brave/chromium/vivaldi） |
 | `python bx.py whoami` | 校验并显示登录状态（用户名/等级/大会员/硬币） |
 | `python bx.py logout` | 清除 cookie（目录与画质设置保留） |
+| `python bx.py doctor [--fast/--site/--json]` | 站点健康自检：L1信息解析 + L2媒体有效分层定位失效原因 |
+
+> **cookie 与站点的关系**：只有 B站下载需要 cookie（会员视频/收藏夹/UP列表/番剧）；
+> douyin、tiktok、youtube、cctv 等平台无需登录即可下载。站点健康状态随时 `doctor` 查看，
+> 各站点现状与已知限制见 `docs/dev/site-support-status.md`。
 
 ### 怎么获取 SESSDATA？
 

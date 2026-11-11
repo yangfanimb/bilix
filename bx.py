@@ -2,7 +2,7 @@
 """bx.py —— bilix 便捷启动器
 
 把 bilix CLI 包装得更顺手：cookie 只需配置一次，之后自动注入每次下载；
-支持从浏览器一键导入 cookie、登录状态检查、默认下载目录/画质记忆。
+支持从浏览器一键导入 cookie、登录状态检查、默认下载目录/画质记忆、站点健康自检。
 
 用法:
   python bx.py login [--browser chrome | --sessdata <SESSDATA>]
@@ -11,24 +11,34 @@
   python bx.py logout       清除已保存的cookie
   python bx.py config [-d 下载目录] [-q 画质] [--reset]
                             设置/查看默认下载目录与画质
+  python bx.py doctor [--fast] [--site 站点名] [--json]
+                            站点健康自检：定位"哪一层"失效（接口漂移排查）
   python bx.py <方法> <key> [bilix原有选项...]
                             执行下载，自动注入cookie与默认目录
 
 方法可用简写: v=视频, s=系列, up=UP主投稿, fav=收藏夹, cate=分区, col=合集/列表,
-              info=资源详情；直接传b站url时自动识别类型。
+              info=资源详情；直接传下载链接时自动识别类型（按url分发到对应站点）。
+
+已支持站点: bilibili(全功能) / douyin / tiktok / youtube(含HLS高清) / cctv / jable
+            hanime1(需-fb导入浏览器cookie过Cloudflare) ；yhdmp/yinghuacd 站点失联暂不可用
 
 示例:
-  python bx.py login                          # 首次配置cookie
+  python bx.py login                          # 首次配置cookie（B站）
   python bx.py v "https://www.bilibili.com/video/BV1GJ411x7h7"
   python bx.py "https://space.bilibili.com/946974" -n 5   # url自动识别
   python bx.py up 946974 -n 5 --keyword 教程
   python bx.py s "https://www.bilibili.com/bangumi/play/ss48267" -p 1 3
+  python bx.py v "https://www.douyin.com/video/xxx"       # 抖音
+  python bx.py "https://www.tiktok.com/@user/video/xxx"   # TikTok（url自动识别）
+  python bx.py v "https://www.youtube.com/watch?v=xxx"    # YouTube（自动选HLS高清）
   python bx.py cate 连载动画 -n 10             # 临时覆盖画质: -q 1080p
+  python bx.py doctor                         # 站点健康巡检
 
 说明:
   - 配置保存在 ~/.bilix/config.json（含SESSDATA，注意不要泄露该文件）
   - SESSDATA 获取方式: 浏览器登录b站 → F12 → 应用/Storage → Cookies → 复制 SESSDATA 的值
   - 显式传入 --cookie / -fb 时以命令行为准，忽略已保存配置
+  - cookie 仅B站下载需要；douyin/tiktok/youtube/cctv 等无需登录
 """
 import json
 import os
@@ -52,7 +62,6 @@ METHOD_ALIASES = {
     'info': 'info',
     'auto': 'auto', 'a': 'auto',
 }
-MANAGE_CMDS = {'login', 'logout', 'whoami', 'config', 'help', '-h', '--help'}
 BROWSER_CHOICES = ['chrome', 'edge', 'firefox', 'safari', 'opera', 'brave', 'chromium', 'vivaldi']
 
 
@@ -273,6 +282,10 @@ def main():
         cmd_logout()
     elif cmd == 'config':
         cmd_config(argv[1:])
+    elif cmd == 'doctor':
+        # 站点健康自检：纯诊断命令，不注入cookie/下载目录等参数
+        code = subprocess.call([sys.executable, '-m', 'bilix', 'doctor', *argv[1:]])
+        sys.exit(code)
     else:
         cfg = load_config()
         args = build_bilix_args(argv, cfg)
