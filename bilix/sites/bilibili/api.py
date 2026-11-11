@@ -8,6 +8,7 @@ from typing import Union, List, Tuple, Dict, Optional
 import json5
 from danmakuC.bilibili import parse_view
 from bilix.download.utils import req_retry, raise_api_error
+from bilix.log import logger
 from bilix.sites.bilibili.utils import parse_ids_from_url
 from bilix.utils import legal_title
 from bilix.exception import APIInvalidError, APIError, APIResourceError, APIUnsupportedError
@@ -109,33 +110,80 @@ async def get_favour_page_info(client: httpx.AsyncClient, url_or_fid: str, pn=1,
     res = await req_retry(client, 'https://api.bilibili.com/x/v3/fav/resource/list', params=params)
     data = json.loads(res.text)['data']
     fav_name, up_name = data['info']['title'], data['info']['upper']['name']
-    bvids = [i['bvid'] for i in data['medias'] if i['title'] != '已失效视频']
     total_size = data['info']['media_count']
+    if data.get('medias') is None:  # 收藏夹不可见：私密收藏夹或无权限访问
+        raise APIResourceError("收藏夹内容不可见（可能为私密收藏夹，或需要登录后访问）", url_or_fid)
+    bvids = [i['bvid'] for i in data['medias'] if i['title'] != '已失效视频']
     return fav_name, up_name, total_size, bvids
 
 
 @raise_api_error
 async def get_cate_page_info(client: httpx.AsyncClient, cate_id, time_from, time_to, pn=1, ps=30,
-                             order='click', keyword=''):
+                             order='click', keyword='', main_cate_id=None):
     """
-    获取分区视频信息（分页）
+    获取分区视频信息（分页）。旧的 s.search.bilibili.com/cate/search 接口已失效：
+    - 有关键词时使用 wbi search/type 接口（支持分区过滤、排序、发布时间过滤），
+      注意该接口的tids仅支持主分区，子分区请传入main_cate_id
+    - 无关键词时 search/type 会返回-400，改用 newlist 接口获取分区最新投稿（不支持排序与时间过滤）
 
-    :param cate_id:
-    :param pn:
-    :param ps:
-    :param order:
-    :param keyword:
-    :param time_from:
-    :param time_to:
+    :param cate_id: 分区tid，支持子分区（仅无关键词时使用）
+    :param pn: 页码
+    :param ps: 页大小
+    :param order: 排序方式，仅关键词搜索时生效：pubdate发布时间，click播放数，stow收藏数，dm弹幕数
+    :param time_from: 开始日期，%Y%m%d格式字符串或时间戳（仅关键词搜索时生效）
+    :param time_to: 结束日期，格式同上
+    :param keyword: 搜索关键词，为空时使用分区最新投稿列表
+    :param main_cate_id: keyword搜索时使用的主分区tid，子分区搜索时由调用方传入
     :param client:
     :return:
     """
-    params = {'search_type': 'video', 'view_type': 'hot_rank', 'cate_id': cate_id, 'pagesize': ps,
-              'keyword': keyword, 'page': pn, 'order': order, 'time_from': time_from, 'time_to': time_to}
-    res = await req_retry(client, 'https://s.search.bilibili.com/cate/search', params=params)
-    info = json.loads(res.text)
-    bvids = [i['bvid'] for i in info['result']]
+    keyword = (keyword or '').strip()
+    if keyword:
+        supported_orders = {'click', 'pubdate', 'dm', 'stow'}
+        base_params = {'search_type': 'video', 'keyword': keyword, 'page': pn, 'page_size': ps,
+                       'order': order if order in supported_orders else 'totalrank'}
+        # 时间过滤参数为unix秒
+        for key, val in (('pubtime_begin_s', time_from), ('pubtime_end_s', time_to)):
+            if isinstance(val, str):  # %Y%m%d格式
+                val = int(time.mktime(time.strptime(val, '%Y%m%d')))
+            base_params[key] = int(val)
+        params = {**base_params, 'tids': int(main_cate_id or cate_id)}
+        await _add_sign(client, params)
+        res = await req_retry(client, 'https://api.bilibili.com/x/web-interface/wbi/search/type', params=params)
+        info = json.loads(res.text)
+        result = (info.get('data') or {}).get('result') or []
+        if not result:  # 部分旧子分区tid在search接口中无效，降级为全站关键词搜索
+            logger.warning(f"tids={params['tids']} 在搜索接口中无结果，降级为全站关键词搜索")
+            params = {k: v for k, v in base_params.items()}
+            await _add_sign(client, params)
+            res = await req_retry(client, 'https://api.bilibili.com/x/web-interface/wbi/search/type', params=params)
+            info = json.loads(res.text)
+            result = (info.get('data') or {}).get('result') or []
+        bvids = [i['bvid'] for i in result if i.get('bvid')]
+    else:
+        res = await req_retry(client, 'https://api.bilibili.com/x/web-interface/newlist',
+                              params={'main_ver': 'v3', 'search_type': 'video', 'cate_id': int(cate_id),
+                                      'pn': pn, 'ps': ps})
+        info = json.loads(res.text)
+        archives = (info.get('data') or {}).get('archives') or []
+        bvids = [i['bvid'] for i in archives]
     return bvids
+
+
+async def _ensure_buvid(client: httpx.AsyncClient):
+    """确保client携带buvid3/buvid4 cookie，降低wbi接口412风控概率
+
+    :param client:
+    :return:
+    """
+    if client.cookies.get('buvid3'):
+        return
+    try:
+        res = await req_retry(client, 'https://api.bilibili.com/x/frontend/finger/spi')
+        data = json.loads(res.text)['data']
+        client.cookies.update({'buvid3': data['b_3'], 'buvid4': data['b_4']})
+    except Exception as e:  # 获取失败不影响后续流程，best effort
+        logger.debug(f"get buvid failed: {e}")
 
 
 async def _add_sign(client: httpx.AsyncClient, params: dict):
@@ -143,6 +191,7 @@ async def _add_sign(client: httpx.AsyncClient, params: dict):
     :param params:
     :return:
     """
+    await _ensure_buvid(client)
     OE = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45,
           35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38,
           41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60,
@@ -392,40 +441,87 @@ def _parse_bv_html(url, html: str) -> VideoInfo:
     return video_info
 
 
-def _parse_ep_html(url, html: str) -> VideoInfo:
-    data = re.search(r'<script id="__NEXT_DATA__" type="application/json">({.*})</script>', html).groups()[0]
-    data = json.loads(data)
-    queries = data['props']['pageProps']['dehydratedState']['queries']
-    season_info = queries[0]['state']['data']['seasonInfo']
-    media_info = season_info['mediaInfo']
-    stat = media_info['stat']
-    status = Status(coin=stat['coins'], view=stat['views'], danmaku=stat['danmakus'], share=stat['share'],
-                    like=stat['likes'], reply=stat['reply'], favorite=stat['favorite'], follow=stat['favorites'])
-    title = legal_title(media_info['title'])
-    desc = media_info['evaluate']
-    episodes = media_info['episodes']
-    path: str = url.split('?')[0].split('/')[-1]
-    ep_id = path[2:] if path.startswith('ep') else str(episodes[0]["ep_id"])
-    p = 0
-    aid, cid, bvid = 0, 0, ""
+def _parse_ep_from_season(url: str, season_data: dict) -> VideoInfo:
+    """通过 pgc/view/web/season api 的数据构建番剧 VideoInfo
+
+    :param url: 番剧播放页url，用于定位用户选择的ep
+    :param season_data: season api 返回的 result 数据
+    :return:
+    """
+    status_d = season_data['stat']
+    status = Status(coin=status_d['coins'], view=status_d['views'], danmaku=status_d['danmakus'],
+                    share=status_d['share'], like=status_d['likes'], reply=status_d['reply'],
+                    favorite=status_d['favorite'], follow=status_d['favorites'])
+    title = legal_title(season_data['title'])
+    desc = season_data.get('evaluate', '')
+    # 番剧正片列表，部分剧集（如预告、pv）可能存在于sections中
+    episodes = list(season_data.get('episodes') or [])
+    if not episodes:
+        for section in season_data.get('sections') or []:
+            episodes.extend(section.get('episodes') or [])
+    if not episodes:
+        raise APIResourceError("未找到剧集数据", url)
+    m = re.search(r'/bangumi/play/(ep|ss)(\d+)', url)
+    ep_id = m.group(2) if m and m.group(1) == 'ep' else None
+    p, aid, cid, bvid, img_url = 0, 0, 0, "", ''
+    ep_found = False
     pages = []
-    img_url = ''
     for i, ep in enumerate(episodes):
-        if str(ep["ep_id"]) == ep_id:
+        if ep_id is not None and str(ep["id"]) == ep_id:
             p = i
-            aid, cid, bvid = ep["aid"], ep["cid"], ep["bvid"]
-            img_url = ep["cover"]
-        pages.append(Page(p_name=legal_title(ep["playerEpTitle"]), p_url=ep["link"]))
+            ep_found = True
+            aid, cid, bvid = int(ep["aid"]), int(ep["cid"]), ep.get("bvid") or ""
+            img_url = ep.get("cover") or ''
+        p_name = legal_title(ep.get('long_title') or ep.get('show_title') or ep['title'])
+        if len(episodes) > 1 and not p_name:  # 避免多集文件名冲突
+            p_name = f"P{i + 1}"
+        pages.append(Page(p_name=p_name, p_url=ep["link"]))
+    if ep_id is not None and not ep_found:
+        raise APIResourceError("未找到该集数", url)
+    if ep_id is None:  # ss url 取第一集
+        ep0 = episodes[0]
+        aid, cid, bvid, img_url = int(ep0["aid"]), int(ep0["cid"]), ep0.get("bvid") or "", ep0.get("cover") or ''
+        ep_id = str(ep0["id"])
+    if not img_url:
+        img_url = season_data.get('cover', '')
     video_info = VideoInfo(
         title=title, status=status, desc=desc,
         aid=aid, cid=cid, bvid=bvid, p=p, pages=pages,
-        img_url=img_url, ep_id=ep_id,
+        img_url=img_url, ep_id=int(ep_id),
     )
     return video_info
 
 
 @raise_api_error
+async def get_season_info(client: httpx.AsyncClient, url_or_sid: str) -> dict:
+    """获取番剧season信息
+
+    :param url_or_sid: 番剧播放页url或season_id
+    :param client:
+    :return: season api 返回的 result 数据
+    """
+    if str(url_or_sid).startswith('http'):
+        m = re.search(r'/bangumi/play/(ep|ss)(\d+)', url_or_sid)
+        if not m:
+            raise APIInvalidError("无法从url中解析番剧id", url_or_sid)
+        params = {'ep_id': m.group(2)} if m.group(1) == 'ep' else {'season_id': m.group(2)}
+    else:
+        params = {'season_id': url_or_sid}
+    res = await req_retry(client, 'https://api.bilibili.com/pgc/view/web/season', params=params)
+    data = json.loads(res.text)
+    if data['code'] != 0:
+        raise APIResourceError(data.get('message', 'unknown'), url_or_sid)
+    return data['result']
+
+
+@raise_api_error
 async def get_video_info(client: httpx.AsyncClient, url: str) -> VideoInfo:
+    if '/bangumi/play/' in url:
+        # 番剧页面已不再内嵌剧集数据，直接通过season api获取
+        season_data = await get_season_info(client, url)
+        video_info = _parse_ep_from_season(url, season_data)
+        await _attach_ep_dash(client, video_info)
+        return video_info
     try:
         # try to get video info from web front-end first
         return await _get_video_info_from_html(client, url)
@@ -443,10 +539,6 @@ async def _get_video_info_from_html(client: httpx.AsyncClient, url: str) -> Vide
         raise APIInvalidError("web 前端访问被风控", url)
     if "window.__INITIAL_STATE__" in html:
         return _parse_bv_html(url, html)
-    elif "__NEXT_DATA__" in html:
-        video_info = _parse_ep_html(url, html)
-        await _attach_ep_dash(client, video_info)
-        return video_info
     else:
         raise APIUnsupportedError("未知页面类型", url)
 

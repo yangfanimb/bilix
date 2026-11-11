@@ -131,7 +131,10 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param codec:
         :return:
         """
-        fav_name, up_name, total_size, bvids = await api.get_favour_page_info(self.client, url_or_fid, keyword=keyword)
+        try:
+            fav_name, up_name, total_size, bvids = await api.get_favour_page_info(self.client, url_or_fid, keyword=keyword)
+        except APIError as e:  # 收藏夹不可见等场景，避免向CLI抛出裸异常
+            return self.logger.error(e)
         if self.hierarchy:
             name = legal_title(f"【收藏夹】{up_name}-{fav_name}")
             path /= name
@@ -153,7 +156,10 @@ class DownloaderBilibili(BaseDownloaderPart):
                                  series=True, image=False, subtitle=False, dm=False, only_audio=False, codec=''):
         ps = 20
         num = min(ps, num)
-        _, _, _, bvids = await api.get_favour_page_info(self.client, url_or_fid, pn, ps, keyword)
+        try:
+            _, _, _, bvids = await api.get_favour_page_info(self.client, url_or_fid, pn, ps, keyword)
+        except APIError as e:
+            return self.logger.error(e)
         cors = []
         for i in bvids[:num]:
             func = self.get_series if series else self.get_video
@@ -201,6 +207,9 @@ class DownloaderBilibili(BaseDownloaderPart):
             path /= legal_title(f"【分区】{cate_name}")
             path.mkdir(parents=True, exist_ok=True)
         cate_id = cate_meta[cate_name]['tid']
+        # search接口的tids仅支持主分区，为子分区时找到所属主分区tid
+        main_cate_id = next((i['tid'] for i in cate_meta.values()
+                             if 'sub' in i and any(s.get('tid') == cate_id for s in i['sub'])), cate_id)
         time_to = datetime.now()
         time_from = time_to - timedelta(days=days)
         time_from, time_to = time_from.strftime('%Y%m%d'), time_to.strftime('%Y%m%d')
@@ -210,15 +219,18 @@ class DownloaderBilibili(BaseDownloaderPart):
         while num > 0:
             cors.append(self._get_cate_by_page(
                 cate_id, path, time_from, time_to, page, min(pagesize, num), order, keyword, quality,
-                series, image=image, subtitle=subtitle, dm=dm, only_audio=only_audio, codec=codec))
+                series, image=image, subtitle=subtitle, dm=dm, only_audio=only_audio, codec=codec,
+                main_cate_id=main_cate_id))
             num -= pagesize
             page += 1
         await asyncio.gather(*cors)
 
     async def _get_cate_by_page(
             self, cate_id, path: Path, time_from, time_to, pn=1, num=30, order='click', keyword='',
-            quality=0, series=True, image=False, subtitle=False, dm=False, only_audio=False, codec=''):
-        bvids = await api.get_cate_page_info(self.client, cate_id, time_from, time_to, pn, 30, order, keyword)
+            quality=0, series=True, image=False, subtitle=False, dm=False, only_audio=False, codec='',
+            main_cate_id=None):
+        bvids = await api.get_cate_page_info(self.client, cate_id, time_from, time_to, pn, 30, order, keyword,
+                                             main_cate_id=main_cate_id)
         bvids = bvids[:num]
         func = self.get_series if series else self.get_video
         # noinspection PyArgumentList
@@ -517,7 +529,9 @@ class DownloaderBilibili(BaseDownloaderPart):
     @classmethod
     @auto_assemble
     def handle(cls, method: str, keys: Tuple[str, ...], options: dict):
-        if cls.pattern.match(keys[0]) or method == 'cate' or method == 'get_cate':
+        # get_cate无需url；get_up/get_favour支持裸id（文档承诺的行为）
+        if cls.pattern.match(keys[0]) or method in {'cate', 'get_cate'} \
+                or (method in {'up', 'get_up', 'fav', 'get_favour'} and keys[0].isdigit()):
             if method in {'auto', 'a'}:
                 m = cls.parse_url(keys[0])
             elif method in cls._cli_map:
