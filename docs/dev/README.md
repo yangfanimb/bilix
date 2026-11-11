@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [lessons-learned.md](./lessons-learned.md) | **经验教训总结**（两轮修复提炼）：排查方法论、防漂移代码模式、各平台坑位速查、安全与凭证管理铁律、验证清单 |
 | [2026-11-bilibili-repair-notes.md](./2026-11-bilibili-repair-notes.md) | B站主站功能修复全记录：背景、故障盘点、方案设计与取舍、实现要点、验证矩阵、踩坑与经验教训、遗留事项 |
 | [bilibili-api-behaviors.md](./bilibili-api-behaviors.md) | B站接口行为参考（实测）：风控/签名/搜索/番剧/收藏夹/UP 投稿等接口的当前行为与坑，含"接口变更快速复核清单" |
 | [site-support-status.md](./site-support-status.md) | 站点支持状态板 + 各平台方案记录 + "修复漂移站点"标准流程（playbook）——长效机制核心文档 |
