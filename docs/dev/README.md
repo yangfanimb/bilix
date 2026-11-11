@@ -6,6 +6,7 @@
 |---|---|
 | [2026-11-bilibili-repair-notes.md](./2026-11-bilibili-repair-notes.md) | B站主站功能修复全记录：背景、故障盘点、方案设计与取舍、实现要点、验证矩阵、踩坑与经验教训、遗留事项 |
 | [bilibili-api-behaviors.md](./bilibili-api-behaviors.md) | B站接口行为参考（实测）：风控/签名/搜索/番剧/收藏夹/UP 投稿等接口的当前行为与坑，含"接口变更快速复核清单" |
+| [site-support-status.md](./site-support-status.md) | 站点支持状态板 + 各平台方案记录 + "修复漂移站点"标准流程（playbook）——长效机制核心文档 |
 | [../bx-guide.md](../bx-guide.md) | 用户侧文档：`bx.py` 便捷启动器（cookie 一次配置自动注入、浏览器导入、默认目录/画质） |
 
 ## 一页速览：本次修了什么（2026-11）
