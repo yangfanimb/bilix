@@ -1,0 +1,35 @@
+# 站点健康定时巡检：平台接口漂移的长效机制
+# 每周自动运行 bilix doctor 并上传报告；失败时以非零码结束，便于在 Actions 页面直观看到漂移站点。
+# 注意：doctor 仅做轻量探测（信息解析+媒体地址Range校验），不会下载完整媒体。
+name: Site health check
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一 02:00 UTC
+  workflow_dispatch: {}   # 支持手动触发
+
+permissions:
+  contents: read
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Run doctor
+        run: python -m bilix doctor --json | tee doctor-report.json
+        continue-on-error: true
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctor-report
+          path: doctor-report.json
+          retention-days: 90

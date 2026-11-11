@@ -56,7 +56,8 @@ def print_help():
         'get_cate 或 cate：  获取分区视频，支持数量选择，关键词搜索，排序\n'
         'get_favour 或 fav： 获取收藏夹内视频，支持数量选择，关键词搜索\n'
         'get_collect 或 col：获取合集或视频列表内视频\n'
-        'info：              打印url所属资源的详细信息（例如点赞数，画质，编码格式等）'
+        'info：              打印url所属资源的详细信息（例如点赞数，画质，编码格式等）\n'
+        'doctor：            站点健康自检，接口漂移排查（支持 --fast/--site/--json）'
     )
     table.add_row(
         "[cyan]<key>[/cyan]",
@@ -204,7 +205,7 @@ class BasedTimeRange(click.ParamType):
 
 @click.command(add_help_option=False)
 @click.argument("method", type=str)
-@click.argument("keys", type=str, nargs=-1, required=True)
+@click.argument("keys", type=str, nargs=-1, required=False)
 @click.option(
     "-d",
     "--dir",
@@ -339,6 +340,25 @@ class BasedTimeRange(click.ParamType):
     default=None,
 )
 @click.option(
+    '--fast',
+    'doctor_fast',
+    is_flag=True,
+    hidden=True,  # 仅供 bilix doctor 使用
+)
+@click.option(
+    '--site',
+    'doctor_site',
+    type=str,
+    default=None,
+    hidden=True,
+)
+@click.option(
+    '--json',
+    'doctor_json',
+    is_flag=True,
+    hidden=True,
+)
+@click.option(
     '-h',
     "--help",
     is_flag=True,
@@ -366,6 +386,19 @@ def main(**kwargs):
     asyncio.set_event_loop(loop)
     logger.debug(f'CLI KEY METHOD and OPTIONS: {kwargs}')
     try:
+        if kwargs['method'] == 'doctor':  # 站点健康自检，无需keys
+            from ..doctor import main as doctor_main
+            argv = list(kwargs['keys'])
+            if kwargs.get('doctor_fast'):
+                argv.append('--fast')
+            if kwargs.get('doctor_site'):
+                argv += ['--site', kwargs['doctor_site']]
+            if kwargs.get('doctor_json'):
+                argv.append('--json')
+            sys.exit(doctor_main(argv))
+        if not kwargs['keys']:
+            logger.error('缺少key参数，使用方法: bilix <method> <key1, key2...> [OPTIONS]，帮助: bilix -h')
+            return
         # CLIProgress.switch_theme(gs="cyan", bs="dark_cyan")
         CLIProgress.start()  # start progress
         if not kwargs['path'].exists():
