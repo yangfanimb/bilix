@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import typing
 from pathlib import Path
 import click
@@ -377,4 +378,15 @@ def main(**kwargs):
     except KeyboardInterrupt:
         logger.info('[cyan]提示：用户中断，重复执行命令可继续下载')
     finally:
-        CLIProgress.stop()  # stop rich progress to ensure cursor is repositioned
+        try:
+            CLIProgress.stop()  # stop rich progress to ensure cursor is repositioned
+        except Exception as e:  # 进度条停止异常不能影响终端恢复
+            logger.debug(f'progress stop error: {e}')
+        finally:
+            # 兜底恢复终端：确保光标可见且位于行首，防止shell提示符/输入显示异常
+            if sys.stdout.isatty():
+                try:
+                    sys.stdout.write('\r\x1b[?25h')
+                    sys.stdout.flush()
+                except OSError:
+                    pass
