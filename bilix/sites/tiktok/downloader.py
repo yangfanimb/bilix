@@ -9,7 +9,7 @@ from bilix.utils import legal_title
 
 
 class DownloaderTiktok(BaseDownloaderPart):
-    pattern = re.compile(r"^https?://([A-Za-z0-9-]+\.)*(titok\.com)")
+    pattern = re.compile(r"^https?://([A-Za-z0-9-]+\.)*(tiktok\.com)")
 
     def __init__(
             self,

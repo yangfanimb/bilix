@@ -58,7 +58,7 @@ METHOD_ALIASES = {
     'up': 'get_up',
     'fav': 'get_favour', 'favour': 'get_favour',
     'cate': 'get_cate',
-    'col': 'get_collect', 'collect': 'get_collect',
+    'col': 'get_collect_or_list', 'collect': 'get_collect_or_list',
     'info': 'info',
     'auto': 'auto', 'a': 'auto',
 }
@@ -248,6 +248,13 @@ def build_bilix_args(argv: list, cfg: dict) -> list:
         args += ['--cookie', cfg['sessdata']]
     elif not cookie_given:
         print('💡 提示: 未配置cookie，部分内容（大会员视频/收藏夹/UP列表）可能无法访问。配置: python bx.py login')
+    # 显式 --cookie '' 表示匿名下载：移除该参数对，避免空cookie值干扰服务端风控判断
+    while '--cookie' in args:
+        i = args.index('--cookie')
+        if i + 1 < len(args) and args[i + 1] == '':
+            del args[i:i + 2]
+        else:
+            break
     # 默认下载目录/画质
     if not any(a in ('-d', '--dir') or a.startswith('--dir=') for a in args) and cfg.get('dir'):
         args += ['-d', cfg['dir']]
