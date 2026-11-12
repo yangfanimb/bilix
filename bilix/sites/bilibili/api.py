@@ -628,6 +628,17 @@ async def _get_video_basic_info_from_api(client: httpx.AsyncClient, url) -> Vide
     return basic_video_info
 
 
+def _norm_subtitle_url(url: str) -> str:
+    """字幕地址规范化：兼容协议相对(//host)、完整URL、空值等形态"""
+    if not url:
+        return ''
+    if url.startswith('http'):
+        return url
+    if url.startswith('//'):
+        return 'https:' + url
+    return 'https://' + url.lstrip('/')
+
+
 @raise_api_error
 async def get_subtitle_info(client: httpx.AsyncClient, bvid, cid):
     params = {'bvid': bvid, 'cid': cid}
@@ -635,7 +646,15 @@ async def get_subtitle_info(client: httpx.AsyncClient, bvid, cid):
     info = json.loads(res.text)
     if info['code'] == -400:
         raise APIError(f'未找到字幕信息', params)
-    return [[f'http:{i["subtitle_url"]}', i['lan_doc']] for i in info['data']['subtitle']['subtitles']]
+    subtitles = info['data']['subtitle']['subtitles']
+    result = []
+    for i in subtitles:
+        url = _norm_subtitle_url(i.get('subtitle_url', ''))
+        if not url:  # AI字幕偶发返回空地址，跳过避免拼出非法URL
+            logger.warning(f'字幕轨 {i.get("lan_doc", "?")} 地址为空，跳过')
+            continue
+        result.append([url, i['lan_doc']])
+    return result
 
 
 @raise_api_error
