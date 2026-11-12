@@ -38,10 +38,11 @@ async def concat(path_lst: List[Path], output_path: Path, remove=True):
     with tempfile.NamedTemporaryFile('w', dir=output_path.parent, delete=False) as fp:
         for path in path_lst:
             fp.write(f"file '{path.name}'\n")
-        cmd = ['ffmpeg', '-f', 'concat', '-safe', '0', '-i', fp.name, '-c', 'copy', '-loglevel', 'quiet',
-               str(output_path)]
-        # print(' '.join(map(lambda x: f'"{x}"', cmd)))
+        tmp_out = output_path.with_name(f'{output_path.stem}.tmp{output_path.suffix}')  # 原子写：保留扩展名
+        cmd = ['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', fp.name, '-c', 'copy', '-loglevel', 'quiet',
+               str(tmp_out)]
     await run_process(cmd)
+    os.replace(tmp_out, output_path)
     os.remove(fp.name)
     if remove:
         for path in path_lst:
@@ -54,29 +55,32 @@ async def convert_audio(input_path: Path, output_path: Path, fmt: str = 'm4a', r
     :param fmt: aac=提取ADTS流（.aac）；m4a=无损重封装（不依赖编码器，修复ADTS流时长元数据不准的问题）；
                 mp3=有损转码（自动探测带libmp3lame的ffmpeg）。输入可为视频容器（-vn忽略视频流）
     """
+    tmp_out = output_path.with_name(f'{output_path.stem}.tmp{output_path.suffix}')  # 原子写：保留扩展名
     if fmt == 'aac':  # 从任意容器提取音轨为ADTS
-        cmd = ['ffmpeg', '-y', '-i', str(input_path), '-vn', '-c:a', 'copy', '-f', 'adts', str(output_path)]
+        cmd = ['ffmpeg', '-y', '-i', str(input_path), '-vn', '-c:a', 'copy', '-f', 'adts', str(tmp_out)]
     elif fmt == 'm4a':
-        cmd = ['ffmpeg', '-y', '-i', str(input_path), '-vn', '-c:a', 'copy', str(output_path)]
+        cmd = ['ffmpeg', '-y', '-i', str(input_path), '-vn', '-c:a', 'copy', str(tmp_out)]
     elif fmt == 'mp3':
         binary = await _ffmpeg_with_mp3_encoder()
         cmd = [binary, '-y', '-i', str(input_path), '-vn', '-codec:a', 'libmp3lame', '-q:a', '2',
-               str(output_path)]
+               str(tmp_out)]
     else:
         raise ValueError(f'unsupported audio format: {fmt}')
     await run_process(cmd)
+    os.replace(tmp_out, output_path)
     if remove:
         os.remove(input_path)
 
 
 async def combine(path_lst: List[Path], output_path: Path, remove=True):
-    cmd = ['ffmpeg']
+    tmp_out = output_path.with_name(f'{output_path.stem}.tmp{output_path.suffix}')  # 原子写：保留扩展名
+    cmd = ['ffmpeg', '-y']
     for path in path_lst:
         cmd.extend(['-i', str(path)])
     # for flac, use -strict -2
-    cmd.extend(['-c', 'copy', '-strict', '-2', '-loglevel', 'quiet', str(output_path)])
-    # print(' '.join(map(lambda x: f'"{x}"', cmd)))
+    cmd.extend(['-c', 'copy', '-strict', '-2', '-loglevel', 'quiet', str(tmp_out)])
     await run_process(cmd)
+    os.replace(tmp_out, output_path)
     if remove:
         for path in path_lst:
             os.remove(path)
@@ -84,9 +88,10 @@ async def combine(path_lst: List[Path], output_path: Path, remove=True):
 
 async def time_range_clip(input_path: Path, start: int, t: int, output_path: Path, remove=True):
     # for flac, use -strict -2
-    cmd = ['ffmpeg', '-ss', f'{start:.1f}', '-t', f'{t:.1f}', '-i', str(input_path), '-codec', 'copy', '-strict', '-2',
-           '-loglevel', 'quiet', '-f', 'mp4', str(output_path)]
-    # print(' '.join(map(lambda x: f'"{x}"', cmd)))
+    tmp_out = output_path.with_name(f'{output_path.stem}.tmp{output_path.suffix}')  # 原子写：保留扩展名
+    cmd = ['ffmpeg', '-y', '-ss', f'{start:.1f}', '-t', f'{t:.1f}', '-i', str(input_path), '-codec', 'copy', '-strict', '-2',
+           '-loglevel', 'quiet', '-f', 'mp4', str(tmp_out)]
     await run_process(cmd)
+    os.replace(tmp_out, output_path)
     if remove:
         os.remove(input_path)

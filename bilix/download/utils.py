@@ -13,13 +13,17 @@ from bilix.log import logger
 
 
 async def merge_files(file_list: List[Path], new_path: Path):
+    tmp_path = new_path.with_suffix(new_path.suffix + '.merging')  # 原子写：中断不留半成品
+    if tmp_path.exists():
+        os.remove(tmp_path)
     first_file = file_list[0]
     async with aiofiles.open(first_file, 'ab') as f:
         for idx in range(1, len(file_list)):
             async with aiofiles.open(file_list[idx], 'rb') as fa:
                 await f.write(await fa.read())
             os.remove(file_list[idx])
-    os.rename(first_file, new_path)
+    os.rename(first_file, tmp_path)
+    os.replace(tmp_path, new_path)
 
 
 async def req_retry(client: httpx.AsyncClient, url_or_urls: Union[str, Sequence[str]], method='GET',

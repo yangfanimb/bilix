@@ -118,6 +118,8 @@ class BaseDownloaderM3u8(BaseDownloader):
                     cors.append(self._get_seg(seg, path.with_name(f"{path.stem}-{idx}.ts"), task_id, p_sema))
             if len(cors) == 0 and time_range:
                 raise Exception(f"time range <{start_time}-{end_time}> invalid for <{path.name}>")
+            self.logger.debug(f"m3u8: 清单分段 {len(m3u8_info.segments)}, 任务数 {len(cors)}, "
+                              f"已存在 {sum(1 for c in cors if not isinstance(c, asyncio.Future) and hasattr(c, 'done'))}")
             if init_sec := m3u8_info.segments[0].init_section:
                 async def _get_init():
                     r = await req_retry(self.client, init_sec.absolute_uri)
