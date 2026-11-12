@@ -11,6 +11,8 @@
 4. **警惕验证环境失真**：site-packages 旧拷贝曾让一轮"修复验证"测的是旧代码。**改代码后第一件事：确认 `bilix.__file__` 指向工作区**。`python -I` 忽略 PYTHONPATH（蕴含-E）。
 5. **双态验证**：登录/匿名、不同IP/网络都要测——大量"接口失效"其实是风控灰度（bilibili 412、douyin 空数据、jable 403 都是间歇性的）。
 6. **文献结论必须实测**：本项目三平台调研均要求代理区分"文献说"与"实测过"，避免把过期方案搬进代码。
+7. **遍历测试矩阵是抓虫利器**：28用例全平台遍历抓出了三处人眼很难发现的bug（tiktok pattern 少个字母、bx 别名指向不存在的方法、auto 方法仅B站实现）——修复功能的最后一环是"用真实CLI全量走一遍"。
+8. **高频测试本身会触发风控**：矩阵连跑时 douyin/tiktok 失败集合在两轮间漂移，单跑即过——区分"代码回归"与"IP被限流"的办法是冷却后复跑 + 看失败集合是否漂移。
 
 ## 二、代码模式（防漂移四件套）
 
@@ -18,6 +20,8 @@
 2. **解析器容错**：不依赖 JSON key 的字面形态（douyin loaderData 遍历取值；youtube 清单属性顺序无关逐行判断）；对 `null` 值防御（`v` 可以是 None）。
 3. **语义化错误分层**：API 层抛语义化异常（APIResourceError/APIUnsupportedError + 用户可行动的提示"需登录/可重试/换网络"）→ downloader 层转日志 → CLI 不裸奔 traceback。
 4. **版本敏感点显式标注**：youtube clientVersion 硬校验、依赖外部项目的地方，在代码头部 docstring 和状态板双处标注"失效时跟谁更新"。
+5. **批量任务要"失败隔离 + 结束总结"**：TaskReport 模式——每个任务捕获自己的异常转为报告（任何失败不中断兄弟任务），CLI 结束统一输出（全部成功一行计数；有异常逐项列明细如"字幕(中文)失败: 原因"）。
+6. **外部二进制能力要探测**：ffmpeg 不同构建差异大（带/不带libmp3lame、mp3 muxer 有但 encoder 无）——转码前探测候选二进制的编码器支持，找不到时给行动建议并保留原始产物。
 
 ## 三、容易踩的坑（各平台速查）
 
@@ -28,6 +32,7 @@
 | tiktok | playAddr 下载需 UA+Referer+会话cookie 三者齐全；WAF 挑战用 PoW 解算；旧 aweme feed 全线失效 |
 | youtube | SABR 后 adaptiveFormats 无直链需 PO token；clientVersion 硬校验；**HLS 中间文件必须带扩展名**（ffmpeg.concat 按扩展名推断容器，无后缀 exit 234）；IOS HLS 音频分段为 ADTS AAC 且常无 EXT-X-MAP |
 | 通用 | 无扩展名的中间文件是 ffmpeg 大坑；测试URL会过期，回归用例要从当天可达资源里取 |
+| CLI入口 | `./脚本.py` 的 shebang 选到的 python3 可能缺依赖——bilix 代码能从脚本目录加载但站点模块被静默跳过，报出误导性的 "Can't find any handler"；启动器要做依赖探测+解释器重执行 |
 
 ## 四、工程与协作
 

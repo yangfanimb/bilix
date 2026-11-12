@@ -67,6 +67,16 @@
   - `data.medias` 为 **`null` 且 `code:0`**：无权限/私密收藏夹（`media_count` 可能仍 >0），应报错而不是当空处理。
 - 空数组夹与 null 夹的 `data.info.title/upper` 均正常返回。
 
+## 5.1 字幕（`x/player/v2`）
+
+- 参数 `bvid/cid`；**字幕按 cid（分P）隔离**，多P视频各P字幕轨不同。
+- ⚠️ **`subtitle_url` 存在三种形态，不能硬拼协议前缀**：
+  - 协议相对 `//aisubtitle.hdslb.com/...`（AI字幕常见）→ 拼 `https:`;
+  - 完整 `https://...`（部分CC字幕）→ 拼了 `http:` 会变成非法地址；
+  - **偶发空字符串**（AI字幕灰度波动）→ 拼出 `http:` 直接崩溃，必须跳过并告警。
+- AI字幕轨**每次请求可能波动**（英文轨时有时无），语言过滤"无匹配"时应列出当前可用轨并提示重试。
+- 字幕内容质量是B站AI生成问题（如英文教学视频识别出意大利语），与下载工具无关。
+
 ## 6. UP 主投稿
 
 - `x/space/wbi/arc/search`：需 wbi 签名 + SESSDATA（匿名 412）；`mid/order/ps/pn/keyword`；响应 `data.list.vlist[]`（含 `bvid/author`）、`data.page.count`。
@@ -79,7 +89,9 @@
 - HTML 路径（`window.__INITIAL_STATE__` + `cidMap` + `window.__playinfo__`）**仍有效**；`window._riskdata_` 出现时表示被风控，应降级到 `x/web-interface/view` API 路径。
 - `x/web-interface/view`：`bvid/aid` 参数，`follow_redirects=True`。
 - `x/player/playurl`：`cid/bvid/qn=120/fnval=4048/fourk=1`，`code != 0` 时 message 可直接呈现给用户（如"视频已失效"——注意部分是权限/地区问题，文案未必准确）。
-- 字幕 `x/player/v2`、弹幕 `x/v2/dm/web/view` + `seg.so`：未变更，正常。
+- ⚠️ **`dash.audio` 列表顺序不保证**（实测存在 [132k, 192k, 64k] 的排列），"取第一个"≠"取最高音质"——必须按 `bandwidth` 选最大（影响 `-oa` 与合并下载的音质）。
+- 字幕 `x/player/v2`、弹幕 `x/v2/dm/web/view` + `seg.so`：正常。
+- 原始 ADTS AAC 流（分P直接拼接产物）**缺容器级时长元数据**，播放器按码率估算时长——需要正确时长时用 M4A 无损重封装（`-c:a copy`，不依赖编码器）。
 
 ## 8. 快速复核清单
 
