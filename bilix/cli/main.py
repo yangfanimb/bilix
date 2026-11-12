@@ -160,6 +160,10 @@ def print_help():
         '字幕语言过滤，逗号分隔（如 中文,en），对字幕语言名与代码做包含匹配，缺省下载全部字幕轨',
     )
     table.add_row(
+        "--audio-format", '[dark_cyan]aac|m4a|mp3',
+        '仅下载音频(-oa)时的输出格式: aac原始流（默认）、m4a无损重封装（修复时长元数据，推荐）、mp3转码（需ffmpeg带libmp3lame）',
+    )
+    table.add_row(
         "-sl --speed-limit", '[dark_cyan]str',
         '最大下载速度，默认无限制。例如：-sl 1.5MB',
     )
@@ -348,6 +352,12 @@ class BasedTimeRange(click.ParamType):
     'sub_lang',
     type=str,
     default='',
+)
+@click.option(
+    '--audio-format',
+    'audio_format',
+    type=click.Choice(['aac', 'm4a', 'mp3'], case_sensitive=False),
+    default='aac',
 )
 @click.option(
     '--fast',

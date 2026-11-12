@@ -63,6 +63,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             hierarchy: bool = True,
             sub_lang: str = '',
+            audio_format: str = 'aac',
     ):
         """
 
@@ -77,6 +78,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param video_concurrency: 视频并发数
         :param hierarchy: 是否使用层级目录
         :param sub_lang: 字幕语言过滤，逗号分隔（如 '中文,en'），空为下载全部字幕轨
+        :param audio_format: 仅下载音频(-oa)时的输出格式: aac=原始ADTS流, m4a=无损重封装(时长元数据正确), mp3=转码(需libmp3lame)
         """
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super(DownloaderBilibili, self).__init__(
@@ -96,6 +98,8 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.title_overflow = 50
         # 字幕语言过滤（--sub-lang），如 '中文,en'；空为下载全部字幕轨
         self.sub_lang = sub_lang or ''
+        # 仅下载音频(-oa)时的输出格式: aac原始流 / m4a无损重封装 / mp3转码
+        self.audio_format = (audio_format or 'aac').lower()
         # 下载任务执行报告收集器（供CLI结束时输出总结）
         self.reports: List[TaskReport] = []
 
@@ -511,6 +515,18 @@ class DownloaderBilibili(BaseDownloaderPart):
                     ok_paths, sub_fails = res
                     for sub_name, err in sub_fails:
                         report.extra[f'字幕({sub_name})'] = f'失败: {eclipse_str(str(err), 60)}'
+            # 音频格式转换（-oa 且指定非aac格式时）：m4a无损重封装修复时长元数据 / mp3转码
+            if only_audio and self.audio_format != 'aac' and path_lst:
+                src = Path(path_lst[0])
+                if src.exists():
+                    target = src.with_suffix(f'.{self.audio_format}')
+                    try:
+                        await ffmpeg.convert_audio(src, target, fmt=self.audio_format)
+                        self.logger.info(f'[cyan]已完成转码[/cyan] {target.name}')
+                    except Exception as e:
+                        report.extra[f'音频转{self.audio_format}'] = f'失败: {eclipse_str(str(e), 60)}（保留原始AAC）'
+                        self.logger.warning(
+                            f'{task_name} 音频转{self.audio_format}失败，保留原始AAC文件: {eclipse_str(str(e), 100)}')
 
         if upper := self.progress.tasks[task_id].fields.get('upper', None):
             await upper(path_lst, media_path)

@@ -26,6 +26,11 @@ python bx.py v "<链接>" --subtitle --sub-lang 中文                  # 只要
 python bx.py v "<链接> -p 3" --subtitle --sub-lang 中文,en          # 中英文字幕
 python bx.py sub "<链接>" --sub-lang 中文                           # 只下载字幕不下载视频
 
+# 仅音频：-oa 配合 --audio-format 选择输出格式
+python bx.py v "<链接>" -oa                                         # 原始AAC流（默认）
+python bx.py v "<链接>" -oa --audio-format m4a                      # 无损重封装M4A（时长元数据正确，推荐）
+python bx.py v "<链接>" -oa --audio-format mp3                      # 转码MP3（自动探测带lame的ffmpeg）
+
 # 站点健康自检（接口漂移排查）
 python bx.py doctor                       # 全量巡检
 python bx.py doctor --site youtube        # 只查某站点
@@ -103,6 +108,7 @@ python bx.py info "<链接>"
 
 ## 常见问题
 
+- **下载结束后总结**：全部成功输出一行计数；存在异常时逐项列出（❌视频失效 / ⚠️字幕(语言)失败 等），便于批量下载后核对
 - **提示缺少依赖**：脚本依赖 bilix 本体及其依赖（httpx、browser_cookie3 等），请先 `pip install -e /opt/workspace/bilix/src`；
 - **从浏览器读取失败**：Chrome 新版本可能加密 cookie，或浏览器正在运行导致数据库被锁——改用交互式粘贴；
 - **下载报 412/风控**：多由匿名高频访问引起，配置 cookie 后可显著缓解，脚本内置重试也会兜底。
