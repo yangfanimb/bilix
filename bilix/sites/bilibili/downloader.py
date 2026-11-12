@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union, Sequence, Tuple, List
 import aiofiles
@@ -10,12 +11,37 @@ from . import api
 from bilix.download.base_downloader_part import BaseDownloaderPart
 from bilix._process import SingletonPPE
 from bilix.utils import legal_title, cors_slice, valid_sess_data, t2s, json2srt
-from bilix.download.utils import req_retry, path_check
+from bilix.download.utils import req_retry, path_check, eclipse_str
 from bilix.exception import HandleMethodError, APIUnsupportedError, APIResourceError, APIError
 from bilix.cli.assign import kwargs_filter, auto_assemble
 from bilix import ffmpeg
 
 from danmakuC.bilibili import proto2ass
+
+
+@dataclass
+class TaskReport:
+    """单个下载任务的执行报告，用于下载结束后的总结说明"""
+    name: str
+    video: str = ''  # ''=成功, '已存在', '失败:原因'
+    extra: dict = field(default_factory=dict)  # 附加产物(字幕/弹幕/封面) -> 状态或失败原因
+
+    @property
+    def level(self) -> str:
+        if self.video.startswith('失败'):
+            return 'fail'
+        if any(v.startswith('失败') for v in self.extra.values()):
+            return 'partial'
+        if self.video == '已存在':
+            return 'exist'
+        return 'ok'
+
+    def detail(self) -> str:
+        parts = []
+        if self.video.startswith('失败') or self.video == '已存在':
+            parts.append(self.video)
+        parts += [f'{k}{v}' for k, v in self.extra.items() if v.startswith('失败')]
+        return '; '.join(parts)
 
 
 class DownloaderBilibili(BaseDownloaderPart):
@@ -70,6 +96,8 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.title_overflow = 50
         # 字幕语言过滤（--sub-lang），如 '中文,en'；空为下载全部字幕轨
         self.sub_lang = sub_lang or ''
+        # 下载任务执行报告收集器（供CLI结束时输出总结）
+        self.reports: List[TaskReport] = []
 
     @classmethod
     def parse_url(cls, url: str):
@@ -314,7 +342,11 @@ class DownloaderBilibili(BaseDownloaderPart):
             async with self.api_sema:
                 video_info = await api.get_video_info(self.client, url)
         except (APIResourceError, APIUnsupportedError) as e:
-            return self.logger.warning(e)
+            # 系列入口即失效（视频已删除/地区限制等），记录报告供总结说明
+            report = TaskReport(name=eclipse_str(url, 50),
+                                video=f'失败: {str(e).split(" resource:")[0].strip()}')
+            self.reports.append(report)
+            return self.logger.warning(e) or report
         if self.hierarchy and len(video_info.pages) > 1:
             path /= video_info.title
             path.mkdir(parents=True, exist_ok=True)
@@ -329,7 +361,7 @@ class DownloaderBilibili(BaseDownloaderPart):
 
     async def get_video(self, url: str, path=Path('.'),
                         quality: Union[str, int] = 0, image=False, subtitle=False, dm=False, only_audio=False,
-                        codec: str = '', time_range: Tuple[int, int] = None, video_info: api.VideoInfo = None):
+                        codec: str = '', time_range: Tuple[int, int] = None, video_info: api.VideoInfo = None) -> TaskReport:
         """
         下载单个视频
         :cli: short: v
@@ -343,16 +375,30 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param codec: 视频编码（可通过codec获取）
         :param time_range: 切片的时间范围
         :param video_info: 额外数据，提供时不用再次请求页面
-        :return:
+        :return: TaskReport 本次任务的执行报告
         """
+        report = TaskReport(name=eclipse_str(url, 50))
+        self.reports.append(report)
+        try:
+            return await self._get_video_inner(url, path, quality, image, subtitle, dm, only_audio,
+                                               codec, time_range, video_info, report)
+        except Exception as e:  # 任何异常都转为报告记录，避免中断批量任务
+            report.video = f'失败: {eclipse_str(str(e), 80)}'
+            self.logger.error(f'{report.name} 视频下载失败: {eclipse_str(str(e), 120)}')
+            return report
+
+    async def _get_video_inner(self, url: str, path, quality, image, subtitle, dm, only_audio,
+                               codec, time_range, video_info, report: TaskReport) -> TaskReport:
         async with self.v_sema:
             if not video_info:
                 try:
                     video_info = await api.get_video_info(self.client, url)
                 except (APIResourceError, APIUnsupportedError) as e:
-                    return self.logger.warning(e)
+                    report.video = f'失败: {e}'
+                    return self.logger.warning(e) or report
             p_name = legal_title(video_info.pages[video_info.p].p_name)
             task_name = legal_title(video_info.title, p_name)
+            report.name = task_name
             # if title is too long, use p_name as base_name
             base_name = p_name if len(video_info.title) > self.title_overflow and self.hierarchy and p_name else \
                 task_name
@@ -363,6 +409,7 @@ class DownloaderBilibili(BaseDownloaderPart):
                 try:  # choose video quality
                     video, audio = video_info.dash.choose_quality(quality, codec)
                 except KeyError:
+                    report.video = '失败: 清晰度/编码不可用（可能需要大会员）'
                     self.logger.warning(
                         f"{task_name} 清晰度<{quality}> 编码<{codec}>不可用，请检查输入是否正确或是否需要大会员")
                 else:
@@ -374,6 +421,7 @@ class DownloaderBilibili(BaseDownloaderPart):
                     elif audio and not only_audio:
                         exists, media_path = path_check(path / f'{media_name}.mp4')
                         if exists:
+                            report.video = '已存在'
                             self.logger.info(f'[green]已存在[/green] {media_path.name}')
                         else:
                             tmp.append((video, path / f'{media_name}-v'))
@@ -384,6 +432,7 @@ class DownloaderBilibili(BaseDownloaderPart):
                     elif audio and only_audio:
                         tmp.append((audio, path / f'{media_name}{audio.suffix}'))
                     else:
+                        report.video = '失败: 无音频流'
                         self.logger.warning(f"No audio for {task_name}")
                     # convert to coroutines
                     if not time_range:
@@ -429,16 +478,20 @@ class DownloaderBilibili(BaseDownloaderPart):
                             media_cors.append(_get_file(m, path / f))
                         await self.progress.update(task_id=task_id, upper=ffmpeg.concat)
             else:
+                report.video = '失败: 需要大会员或该地区不支持'
                 self.logger.warning(f'{task_name} 需要大会员或该地区不支持')
             # additional task
             add_cors = []
+            add_labels = []
             if image or subtitle or dm:
                 extra_path = path / "extra" if self.hierarchy else path
                 extra_path.mkdir(exist_ok=True)
                 if image:
                     add_cors.append(self.get_static(video_info.img_url, path=extra_path / base_name))
+                    add_labels.append('封面')
                 if subtitle:
                     add_cors.append(self.get_subtitle(url, path=extra_path, video_info=video_info))
+                    add_labels.append('字幕')
                 if dm:
                     try:
                         width, height = video.width, video.height
@@ -446,12 +499,24 @@ class DownloaderBilibili(BaseDownloaderPart):
                         width, height = 1920, 1080
                     add_cors.append(self.get_dm(
                         url, path=extra_path, convert_func=self._dm2ass_factory(width, height), video_info=video_info))
-            path_lst, _ = await asyncio.gather(asyncio.gather(*media_cors), asyncio.gather(*add_cors))
+                    add_labels.append('弹幕')
+            path_lst, extra_res = await asyncio.gather(asyncio.gather(*media_cors),
+                                                       asyncio.gather(*add_cors, return_exceptions=True))
+            # 附加产物结果上报（字幕/封面/弹幕失败明细）
+            for label, res in zip(add_labels, extra_res):
+                if isinstance(res, Exception):
+                    report.extra[label] = f'失败: {eclipse_str(str(res), 60)}'
+                    self.logger.warning(f'{task_name} {label}下载失败: {eclipse_str(str(res), 100)}')
+                elif label == '字幕':
+                    ok_paths, sub_fails = res
+                    for sub_name, err in sub_fails:
+                        report.extra[f'字幕({sub_name})'] = f'失败: {eclipse_str(str(err), 60)}'
 
         if upper := self.progress.tasks[task_id].fields.get('upper', None):
             await upper(path_lst, media_path)
             self.logger.info(f'[cyan]已完成[/cyan] {media_path.name}')
         await self.progress.update(task_id, visible=False)
+        return report
 
     @staticmethod
     def _dm2ass_factory(width: int, height: int):
@@ -520,17 +585,41 @@ class DownloaderBilibili(BaseDownloaderPart):
         try:
             subtitles = await api.get_subtitle_info(self.client, video_info.bvid, cid, langs=langs)
         except APIError as e:
-            return self.logger.warning(e)
+            return self.logger.warning(e) or ([], [(f'{p_name}字幕', e)])
         cors = []
+        names = []
 
         for sub_url, sub_name in subtitles:
             if len(video_info.title) > self.title_overflow and self.hierarchy and p_name:
                 file_name = legal_title(p_name, sub_name)
             else:
                 file_name = legal_title(video_info.title, p_name, sub_name)
+            names.append(sub_name)
             cors.append(self.get_static(sub_url, path / file_name, convert_func=convert_func))
-        paths = await asyncio.gather(*cors)
-        return paths
+        # 逐轨捕获失败：字幕轨之间互不影响，失败信息供总结报告使用
+        results = await asyncio.gather(*cors, return_exceptions=True)
+        ok_paths = [p for p in results if not isinstance(p, Exception)]
+        fails = [(n, r) for n, r in zip(names, results) if isinstance(r, Exception)]
+        for sub_name, err in fails:
+            self.logger.warning(f'字幕 {sub_name} 下载失败: {eclipse_str(str(err), 100)}')
+        return ok_paths, fails
+
+    def print_summary(self):
+        """下载结束后输出总结：全部成功时仅一行，存在异常时列出明细（哪些视频/字幕没下载成功）"""
+        if not self.reports:
+            return
+        from collections import Counter
+        levels = Counter(r.level for r in self.reports)
+        label = {'ok': '✅成功', 'exist': '⏭️已存在', 'partial': '⚠️部分失败', 'fail': '❌失败'}
+        head = f'📋 下载总结: 共{len(self.reports)}项 | ' + ' '.join(
+            f'{label[k]}{levels[k]}' for k in sorted(label, key=lambda k: -levels.get(k, 0)) if levels.get(k))
+        if levels.get('fail') or levels.get('partial'):
+            self.logger.warning(head)
+            for r in self.reports:
+                if r.level in ('fail', 'partial'):
+                    self.logger.warning(f'  {label[r.level]} {r.name} — {r.detail()}')
+        else:
+            self.logger.info(head)
 
     @classmethod
     @auto_assemble

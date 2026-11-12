@@ -416,6 +416,8 @@ def main(**kwargs):
             logger.info(f'Directory {kwargs["path"]} not exists, auto created')
         executor, cor = assign(kwargs)
         loop.run_until_complete(cor)
+        if hasattr(executor, 'print_summary'):  # 下载任务结束后输出总结说明
+            executor.print_summary()
     except HandleError as e:  # method no match
         logger.error(e)
     except KeyboardInterrupt:
