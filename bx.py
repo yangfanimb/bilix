@@ -47,6 +47,43 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+
+def _ensure_deps():
+    """./bx.py 直接执行时 shebang 可能选到缺少bilix依赖的解释器（如系统python3），
+    导致站点模块被静默跳过、报出晦涩的 Can't find any handler。
+    探测已知可用解释器并重新执行自身；全部不可用时报出可行动的错误。"""
+    try:
+        import httpx  # noqa: F401  bilix核心依赖探针
+        return
+    except ImportError:
+        pass
+    import shutil
+    import glob
+    cands = []
+    if os.environ.get('BX_PYTHON'):  # 用户显式指定
+        cands.append(os.environ['BX_PYTHON'])
+    repo_venv = Path(__file__).resolve().parent.parent / '.venv' / 'bin' / 'python'
+    cands += [str(repo_venv), shutil.which('python3.12') or '', shutil.which('python3.11') or '']
+    cands += sorted(glob.glob(str(Path.home() / '.pyenv' / 'versions' / '*' / 'bin' / 'python')), reverse=True)
+    src_dir = str(Path(__file__).resolve().parent)
+    for py in cands:
+        if not py or not Path(py).exists():
+            continue
+        try:
+            # cwd设为bx.py所在目录，确保探测与重执行时都加载工作区bilix代码
+            r = subprocess.run([py, '-c', 'import bilix, httpx'], capture_output=True, cwd=src_dir)
+            if r.returncode == 0:
+                os.execv(py, [py, str(Path(__file__).resolve()), *sys.argv[1:]])
+        except Exception:
+            continue
+    print('错误: 当前Python缺少bilix依赖，且未探测到可用解释器。\n'
+          '  请先安装依赖: pip install -e <bilix仓库>/src\n'
+          '  或设置环境变量 BX_PYTHON 指向带依赖的解释器后重试。', file=sys.stderr)
+    sys.exit(1)
+
+
+_ensure_deps()
+
 CONFIG_DIR = Path.home() / '.bilix'
 CONFIG_FILE = CONFIG_DIR / 'config.json'
 NAV_API = 'https://api.bilibili.com/x/web-interface/nav'

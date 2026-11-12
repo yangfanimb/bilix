@@ -151,4 +151,8 @@ def assign(cli_kwargs):
             return executor, cor
         if exc is not None:  # for the module, some handler can handle, but method miss match
             raise exc
-    raise HandleError(f"Can't find any handler for method: '{method}' keys: {keys}")
+    hint = ''
+    if method in {'info', 'get_video', 'v', 'get_series', 's'} and keys and keys[0].startswith('http'):
+        # 站点模块可能因依赖缺失被整体跳过（可选依赖机制），给出可行动的排查提示
+        hint = '。若怀疑站点模块因依赖缺失被跳过，请确认运行解释器已安装依赖（或用bx启动器），并可用 --debug 查看跳过日志'
+    raise HandleError(f"Can't find any handler for method: '{method}' keys: {keys}{hint}")
