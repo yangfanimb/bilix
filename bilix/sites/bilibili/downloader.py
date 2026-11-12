@@ -1,9 +1,11 @@
 import asyncio
 import functools
+import hashlib
+import json
+import os
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Union, Sequence, Tuple, List
+from typing import Optional, Union, Sequence, Tuple, List
 import aiofiles
 import httpx
 from datetime import datetime, timedelta
@@ -11,37 +13,13 @@ from . import api
 from bilix.download.base_downloader_part import BaseDownloaderPart
 from bilix._process import SingletonPPE
 from bilix.utils import legal_title, cors_slice, valid_sess_data, t2s, json2srt
+from bilix.download.base_downloader import BaseDownloader, TaskReport
 from bilix.download.utils import req_retry, path_check, eclipse_str
 from bilix.exception import HandleMethodError, APIUnsupportedError, APIResourceError, APIError
 from bilix.cli.assign import kwargs_filter, auto_assemble
 from bilix import ffmpeg
 
 from danmakuC.bilibili import proto2ass
-
-
-@dataclass
-class TaskReport:
-    """单个下载任务的执行报告，用于下载结束后的总结说明"""
-    name: str
-    video: str = ''  # ''=成功, '已存在', '失败:原因'
-    extra: dict = field(default_factory=dict)  # 附加产物(字幕/弹幕/封面) -> 状态或失败原因
-
-    @property
-    def level(self) -> str:
-        if self.video.startswith('失败'):
-            return 'fail'
-        if any(v.startswith('失败') for v in self.extra.values()):
-            return 'partial'
-        if self.video == '已存在':
-            return 'exist'
-        return 'ok'
-
-    def detail(self) -> str:
-        parts = []
-        if self.video.startswith('失败') or self.video == '已存在':
-            parts.append(self.video)
-        parts += [f'{k}{v}' for k, v in self.extra.items() if v.startswith('失败')]
-        return '; '.join(parts)
 
 
 class DownloaderBilibili(BaseDownloaderPart):
@@ -102,6 +80,11 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.audio_format = (audio_format or 'aac').lower()
         # 下载任务执行报告收集器（供CLI结束时输出总结）
         self.reports: List[TaskReport] = []
+        # 跨运行状态记忆：重跑同一命令时自动跳过上次成功项、重试失败项
+        self._state_path = None
+        self._prev_state: dict = {}
+        self._url_state: dict = {}
+        self._state_lock = asyncio.Lock()
 
     @classmethod
     def parse_url(cls, url: str):
@@ -140,6 +123,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             name = legal_title(f"【合集】{up_name}", col_name)
         else:
             raise ValueError(f'{url} invalid for get_collect_or_list')
+        self._init_state(f'collect:{url}')
         if self.hierarchy:
             path /= name
             path.mkdir(parents=True, exist_ok=True)
@@ -147,6 +131,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             *[self.get_series(f"https://www.bilibili.com/video/{i}", path=path, quality=quality, codec=codec,
                               image=image, subtitle=subtitle, dm=dm, only_audio=only_audio)
               for i in bvids])
+        await self._save_state()
 
     async def get_favour(self, url_or_fid, path=Path('.'),
                          num=20, keyword='', quality=0, series=True, image=False, subtitle=False,
@@ -167,6 +152,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param codec:
         :return:
         """
+        self._init_state(f'favour:{url_or_fid}')
         try:
             fav_name, up_name, total_size, bvids = await api.get_favour_page_info(self.client, url_or_fid, keyword=keyword)
         except APIError as e:  # 收藏夹不可见等场景，避免向CLI抛出裸异常
@@ -187,6 +173,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             cors.append(self._get_favor_by_page(
                 url_or_fid, path, i + 1, num, keyword, quality, series, image, subtitle, dm, only_audio, codec=codec))
         await asyncio.gather(*cors)
+        await self._save_state()
 
     async def _get_favor_by_page(self, url_or_fid, path: Path, pn=1, num=20, keyword='', quality=0,
                                  series=True, image=False, subtitle=False, dm=False, only_audio=False, codec=''):
@@ -239,6 +226,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         if 'subChannelId' not in cate_meta[cate_name]:
             sub_names = [i['name'] for i in cate_meta[cate_name]['sub']]
             return self.logger.error(f'{cate_name} 是主分区，仅支持子分区，试试 {sub_names}')
+        self._init_state(f'cate:{cate_name}')
         if self.hierarchy:
             path /= legal_title(f"【分区】{cate_name}")
             path.mkdir(parents=True, exist_ok=True)
@@ -260,6 +248,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             num -= pagesize
             page += 1
         await asyncio.gather(*cors)
+        await self._save_state()
 
     async def _get_cate_by_page(
             self, cate_id, path: Path, time_from, time_to, pn=1, num=30, order='click', keyword='',
@@ -295,6 +284,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param codec:
         :return:
         """
+        self._init_state(f'up:{url_or_mid}')
         ps = 30
         up_name, total_size, bv_ids = await api.get_up_video_info(self.client, url_or_mid, 1, ps, order, keyword)
         if self.hierarchy:
@@ -312,6 +302,7 @@ class DownloaderBilibili(BaseDownloaderPart):
                 url_or_mid, path, i + 1, p_num, order, keyword, quality, series, image=image,
                 subtitle=subtitle, dm=dm, only_audio=only_audio, codec=codec))
         await asyncio.gather(*cors)
+        await self._save_state()
 
     async def _get_up_by_page(self, url_or_mid, path: Path, pn=1, num=30, order='pubdate', keyword='', quality=0,
                               series=True, image=False, subtitle=False, dm=False, only_audio=False, codec='', ):
@@ -342,6 +333,9 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param codec: 视频编码（可通过info获取）
         :return:
         """
+        standalone = self._state_path is None  # 被收藏夹/分区等批量入口调用时不重复初始化
+        if standalone:
+            self._init_state(f'series:{url}')
         try:
             async with self.api_sema:
                 video_info = await api.get_video_info(self.client, url)
@@ -362,6 +356,8 @@ class DownloaderBilibili(BaseDownloaderPart):
         if p_range:
             cors = cors_slice(cors, p_range)
         await asyncio.gather(*cors)
+        if standalone:
+            await self._save_state()
 
     async def get_video(self, url: str, path=Path('.'),
                         quality: Union[str, int] = 0, image=False, subtitle=False, dm=False, only_audio=False,
@@ -383,6 +379,21 @@ class DownloaderBilibili(BaseDownloaderPart):
         """
         report = TaskReport(name=eclipse_str(url, 50))
         self.reports.append(report)
+        fp = {'q': str(quality), 'c': codec, 'oa': only_audio, 'af': self.audio_format,
+              'img': image, 'sub': subtitle, 'dm': dm, 'sl': self.sub_lang}
+        if self._state_path is None:  # 单视频直跑时懒初始化
+            self._init_state(f'video:{url}')
+        prev = self._prev_state.get(url)
+        if prev and prev.get('video') == 'ok' and prev.get('fp') == fp \
+                and not any(str(v).startswith('失败') for v in (prev.get('extra') or {}).values()) \
+                and prev.get('file') and Path(prev['file']).exists():
+            # 上次同参数下载成功且产物仍在：跳过（连API请求都不发起）
+            report.video = '已存在'
+            report.file = prev['file']
+            self.logger.info(f'[green]上次已成功，跳过[/green] {Path(prev["file"]).name}')
+            self._url_state[url] = {'video': 'ok', 'extra': {}, 'fp': fp, 'file': prev['file']}
+            await self._save_state()
+            return report
         try:
             return await self._get_video_inner(url, path, quality, image, subtitle, dm, only_audio,
                                                codec, time_range, video_info, report)
@@ -390,6 +401,10 @@ class DownloaderBilibili(BaseDownloaderPart):
             report.video = f'失败: {eclipse_str(str(e), 80)}'
             self.logger.error(f'{report.name} 视频下载失败: {eclipse_str(str(e), 120)}')
             return report
+        finally:  # 状态写盘（原子替换），中断后下次可续
+            self._url_state[url] = {'video': report.video or 'ok', 'extra': report.extra,
+                                    'fp': fp, 'file': report.file}
+            await self._save_state()
 
     async def _get_video_inner(self, url: str, path, quality, image, subtitle, dm, only_audio,
                                codec, time_range, video_info, report: TaskReport) -> TaskReport:
@@ -420,20 +435,24 @@ class DownloaderBilibili(BaseDownloaderPart):
                     tmp: List[Tuple[api.Media, Path]] = []
                     # 1. only video
                     if not audio and not only_audio:
+                        report.file = str(path / f'{media_name}.mp4')
                         tmp.append((video, path / f'{media_name}.mp4'))
                     # 2. video and audio
                     elif audio and not only_audio:
                         exists, media_path = path_check(path / f'{media_name}.mp4')
                         if exists:
                             report.video = '已存在'
+                            report.file = str(media_path)
                             self.logger.info(f'[green]已存在[/green] {media_path.name}')
                         else:
                             tmp.append((video, path / f'{media_name}-v'))
                             tmp.append((audio, path / f'{media_name}-a'))
                             # task need to be merged
+                            report.file = str(path / f'{media_name}.mp4')
                             await self.progress.update(task_id=task_id, upper=ffmpeg.combine)
                     # 3. only audio
                     elif audio and only_audio:
+                        report.file = str(path / f'{media_name}{audio.suffix}')
                         tmp.append((audio, path / f'{media_name}{audio.suffix}'))
                     else:
                         report.video = '失败: 无音频流'
@@ -522,6 +541,7 @@ class DownloaderBilibili(BaseDownloaderPart):
                     target = src.with_suffix(f'.{self.audio_format}')
                     try:
                         await ffmpeg.convert_audio(src, target, fmt=self.audio_format)
+                        report.file = str(target)
                         self.logger.info(f'[cyan]已完成转码[/cyan] {target.name}')
                     except Exception as e:
                         report.extra[f'音频转{self.audio_format}'] = f'失败: {eclipse_str(str(e), 60)}（保留原始AAC）'
@@ -620,6 +640,26 @@ class DownloaderBilibili(BaseDownloaderPart):
             self.logger.warning(f'字幕 {sub_name} 下载失败: {eclipse_str(str(err), 100)}')
         return ok_paths, fails
 
+    def _init_state(self, scope: str):
+        """载入历史下载状态（同一命令重跑时：跳过上次成功项，重试失败项）"""
+        self._state_path = Path.home() / '.bilix' / 'state' / f"{hashlib.md5(scope.encode()).hexdigest()[:16]}.json"
+        try:
+            self._prev_state = json.loads(self._state_path.read_text(encoding='utf-8')).get('items', {})
+            ok = sum(1 for v in self._prev_state.values() if v.get('video') == 'ok')
+            self.logger.info(f'检测到上次下载状态: {len(self._prev_state)}项(成功{ok})，本次将跳过成功项并重试失败项')
+        except (FileNotFoundError, json.JSONDecodeError):
+            self._prev_state = {}
+
+    async def _save_state(self):
+        if not self._state_path:
+            return
+        async with self._state_lock:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {'saved_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'items': self._url_state}
+            tmp = self._state_path.with_suffix('.tmp')
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+            os.replace(tmp, self._state_path)
+
     def print_summary(self):
         """下载结束后输出总结：全部成功时仅一行，存在异常时列出明细（哪些视频/字幕没下载成功）"""
         if not self.reports:
@@ -636,6 +676,8 @@ class DownloaderBilibili(BaseDownloaderPart):
                     self.logger.warning(f'  {label[r.level]} {r.name} — {r.detail()}')
         else:
             self.logger.info(head)
+        if self._state_path and self._url_state:
+            self.logger.info(f'状态已保存 {self._state_path}（重跑同一命令将自动跳过成功项）')
 
     @classmethod
     @auto_assemble

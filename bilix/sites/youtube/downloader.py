@@ -3,10 +3,13 @@ import asyncio
 from pathlib import Path
 from typing import Union
 import httpx
+from rich.tree import Tree
+from rich import print as rprint
 from . import api
+from bilix.download.base_downloader import TaskReport
 from bilix.download.base_downloader_m3u8 import BaseDownloaderM3u8
 from bilix.download.base_downloader_part import BaseDownloaderPart
-from bilix.download.utils import eclipse_str
+from bilix.download.utils import eclipse_str, req_retry
 from bilix import ffmpeg
 
 
@@ -28,6 +31,7 @@ class DownloaderYoutube(BaseDownloaderM3u8, BaseDownloaderPart):
             # unique params
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             audio_format: str = 'aac',
+            hierarchy: bool = True,
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super().__init__(
@@ -41,25 +45,40 @@ class DownloaderYoutube(BaseDownloaderM3u8, BaseDownloaderPart):
             video_concurrency=video_concurrency,
             audio_format=audio_format,
         )
+        self.hierarchy = hierarchy
 
-    async def get_video(self, url: str, path=Path('.'), quality=0, subtitle=False, sub_lang: str = None,
-                        only_audio=False):
+    async def get_video(self, url: str, path=Path('.'), quality=0, codec: str = '', subtitle=False,
+                        sub_lang: str = None, only_audio=False) -> TaskReport:
         """
         下载单个视频
         :cli: short: v
         :param url:
         :param path:
         :param quality: 画质选择，0=最高；'1080p'等字符串=高度≤目标的最大者（HLS路径生效）
-        :param subtitle: 是否下载字幕（YouTube CC字幕，json3转SRT）
+        :param codec: 编码过滤（如 avc/hev/vp09，HLS路径生效）
+        :param subtitle: 是否下载字幕（YouTube CC字幕，转SRT）
         :param sub_lang: 字幕语言过滤，逗号分隔（如 'en,zh'），None时使用下载器配置
         :param only_audio: 仅下载音频
-        :return:
+        :return: TaskReport 本次任务的执行报告
         """
+        report = self.report(eclipse_str(url, 50))
+        try:
+            return await self._get_video_inner(url, path, quality, codec, subtitle, sub_lang, only_audio, report)
+        except Exception as e:  # 任何异常转为报告记录，避免中断批量任务
+            report.video = f'失败: {eclipse_str(str(e), 80)}'
+            self.logger.error(f'{report.name} 视频下载失败: {eclipse_str(str(e), 120)}')
+            return report
+
+    async def _get_video_inner(self, url: str, path, quality, codec, subtitle, sub_lang, only_audio,
+                               report) -> TaskReport:
         async with self.v_sema:
-            video_info = await api.get_video_info(self.client, url, quality=quality)
+            video_info = await api.get_video_info(self.client, url, quality=quality, codec=codec)
+            report.name = video_info.title
             video_path = path / (video_info.title + '.mp4')
             if not only_audio and video_path.exists():
-                return self.logger.info(f'[green]已存在[/green] {video_path.name}')
+                report.video = '已存在'
+                report.file = str(video_path)
+                return self.logger.info(f'[green]已存在[/green] {video_path.name}') or report
             task_id = await self.progress.add_task(description=video_info.title, upper=True)
             add_cors = []
             if subtitle:
@@ -77,6 +96,7 @@ class DownloaderYoutube(BaseDownloaderM3u8, BaseDownloaderPart):
                                                      path=path / (video_info.title + '-a.mp4'), task_id=task_id)
                 await self.progress.update(task_id, visible=False)
                 audio_out = await self.extract_audio(Path(audio_file))
+                report.file = str(audio_out)
                 self.logger.info(f'[cyan]已完成[/cyan] {audio_out.name}')
                 return audio_out
             if video_info.hls:
@@ -102,9 +122,84 @@ class DownloaderYoutube(BaseDownloaderM3u8, BaseDownloaderPart):
         if add_cors:
             await asyncio.gather(*add_cors, return_exceptions=True)
         await ffmpeg.combine(path_lst, output_path=video_path)
+        report.file = str(video_path)
         self.logger.info(f'[cyan]已完成[/cyan] {video_path.name}')
         await self.progress.update(task_id, visible=False)
         return video_path
+
+    async def get_series(self, url: str, path=Path('.'), quality=0, codec: str = '', subtitle=False,
+                         sub_lang: str = None, only_audio=False, num: int = None):
+        """
+        下载YouTube播放列表（get_series语义）
+        :cli: short: s
+        :param url: 播放列表url（playlist?list= 形式）
+        :param path: 保存路径（层级模式下按列表名建目录）
+        :param quality: 画质选择，0=最高；'1080p'等字符串=高度≤目标的最大者
+        :param codec: 编码过滤（如 avc/hev/vp09）
+        :param subtitle: 是否下载字幕
+        :param sub_lang: 字幕语言过滤
+        :param only_audio: 仅下载音频
+        :param num: 下载前N个视频（0/None=全部；CLI默认-n 10防止超大列表误下）
+        :return:
+        """
+        pl_title, items = await api.get_playlist_info(self.client, url)
+        if self.hierarchy:
+            path /= pl_title
+            path.mkdir(parents=True, exist_ok=True)
+        self.logger.info(f'播放列表 {pl_title}: 共{len(items)}个视频' + (f'（本次下载前{num}个）' if num else ''))
+        if num:
+            items = items[:num]
+        await asyncio.gather(
+            *[self.get_video(f'https://www.youtube.com/watch?v={vid}', path=path, quality=quality, codec=codec,
+                             subtitle=subtitle, sub_lang=sub_lang, only_audio=only_audio)
+              for vid, _ in items])
+        self.print_summary()
+
+    async def info(self, url: str):
+        """
+        打印YouTube视频信息（画质分轨/字幕语言/时长/播放数据）
+        :cli: short: i
+        :param url: 视频url
+        :return:
+        """
+        video_id = api._parse_video_id(url)
+        data = await api._player(self.client, 'android', video_id)
+        details = data.get('videoDetails') or {}
+        views = int(details.get('viewCount') or 0)
+        dur = int(details.get('lengthSeconds') or 0)
+        dur_fmt = f'{dur // 60}:{dur % 60:02}分' if dur else '?'
+        variants = []
+        try:  # HLS分轨信息（画质/编码可选范围）
+            ios_data = await api._player(self.client, 'ios', video_id)
+            mu = (ios_data.get('streamingData') or {}).get('hlsManifestUrl')
+            if mu:
+                res = await req_retry(self.client, mu)
+                variants = api._parse_hls_variants(res.text)
+        except Exception:
+            pass
+        caps = api._get_caption_tracks(data)
+        cap_names = [n for _, n, _ in caps]
+        has_zh = any('zh' in c.lower() or '中' in n for _, n, c in caps)
+        has_en = any(n.lower().startswith('en') or '英' in n for _, n, c in caps)
+
+        tree = Tree(
+            f"[bold reverse] {details.get('title')} [/]"
+            f" {views:,}👀 {details.get('author', '?')} 时长:{dur_fmt}"
+            + (' [live]' if details.get('isLiveContent') else ''),
+            guide_style='bold cyan')
+        video_tree = tree.add('[bold]画质 Quality')
+        if variants:
+            heights = sorted({v[1] for v in variants if v[1]}, reverse=True)
+            for i, h in enumerate(heights):
+                codec_set = {c for (u, vh, bw, codecs) in variants if vh == h for c in (codecs or '?').split(',')}
+                video_tree.add(f'{h}p [{"+".join(sorted(codec_set))}]' + (' [reverse]最高[/]' if i == 0 else ''))
+        else:
+            video_tree.add('未获取到HLS分轨（可能需要PO token或登录）')
+        audio_tree = tree.add('[bold]音频 Audio')
+        audio_tree.add('随视频分轨合并输出（-oa 可单独提取，--audio-format m4a/mp3）')
+        tree.add(f'[bold]字幕 Subtitle（中文:{("有" if has_zh else "无")} 英文:{("有" if has_en else "无")}'
+                 f' | 共{len(cap_names)}轨: {", ".join(cap_names) if cap_names else "无CC字幕"}）')
+        rprint(tree)
 
     async def get_subtitle(self, url: str, path=Path('.'), sub_lang: str = None, convert_func=None):
         """

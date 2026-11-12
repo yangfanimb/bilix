@@ -18,6 +18,7 @@ from bilix.utils import legal_title
 from bilix.exception import APIUnsupportedError, APIResourceError
 
 INNERTUBE_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false'
+BROWSE_URL = 'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false'
 # clientVersion 有硬校验：跟随 yt-dlp 更新
 CLIENTS = {
     'android': {
@@ -30,6 +31,11 @@ CLIENTS = {
         'context': {'client': {'clientName': 'IOS', 'clientVersion': '21.26.4',
                                'deviceModel': 'iPhone16,2', 'hl': 'en', 'gl': 'US'}},
         'user-agent': 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;) gzip',
+    },
+    'web': {
+        'context': {'client': {'clientName': 'WEB', 'clientVersion': '2.20241120.01.00', 'hl': 'en', 'gl': 'US'}},
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     },
 }
 
@@ -103,19 +109,26 @@ def _parse_hls_manifest(manifest_text: str) -> tuple[str, str | None]:
 
 
 def _parse_hls_variants(manifest_text: str) -> list:
-    """解析 master 清单的视频分轨: [(清单URL, 高度, BANDWIDTH)]，按高度降序"""
+    """解析 master 清单的视频分轨: [(清单URL, 高度, BANDWIDTH, CODECS)]，按高度降序"""
     variants = []
     for m in re.finditer(r'#EXT-X-STREAM-INF:[^\n]*\n([^\n#][^\n]*)', manifest_text):
         attrs = m.group(0)
         res = re.search(r'RESOLUTION=(\d+)x(\d+)', attrs)
-        bw = int(re.search(r'BANDWIDTH=(\d+)', attrs).group(1)) if re.search(r'BANDWIDTH=(\d+)', attrs) else 0
+        bw_m = re.search(r'BANDWIDTH=(\d+)', attrs)
+        bw = int(bw_m.group(1)) if bw_m else 0
         height = int(res.group(2)) if res else 0
-        variants.append((m.group(1).strip(), height, bw))
+        codecs = (re.search(r'CODECS="([^"]+)"', attrs) or [None, ''])[1] if re.search(r'CODECS="([^"]+)"', attrs) else ''
+        variants.append((m.group(1).strip(), height, bw, codecs))
     return sorted(variants, key=lambda v: -v[1])
 
 
-def _pick_hls_by_quality(variants: list, quality) -> str:
-    """按画质参数选择视频分轨: 0/None=最高；'1080p'字符串=高度≤目标的最大者，无则取最接近的"""
+def _pick_hls_by_quality(variants: list, quality, codec: str = '') -> str:
+    """按画质参数选择视频分轨: 0/None=最高；'1080p'字符串=高度≤目标的最大者，无则取最接近的；
+    codec可按编码包含过滤（如 avc/hev/vp09）"""
+    if codec:
+        filtered = [v for v in variants if codec.lower() in (v[3] or '').lower()]
+        if filtered:
+            variants = filtered
     if not variants:
         raise APIUnsupportedError('HLS master清单中未找到视频流', '')
     if not quality:
@@ -188,7 +201,7 @@ def convert_subtitle(content: bytes) -> bytes:
 
 
 @raise_api_error
-async def get_video_info(client: httpx.AsyncClient, url: str, quality=0):
+async def get_video_info(client: httpx.AsyncClient, url: str, quality=0, codec: str = ''):
     """获取YouTube视频信息
 
     :param quality: 画质选择，0=最高；'1080p'等字符串=高度≤目标的最大者（HLS路径生效）
@@ -214,7 +227,7 @@ async def get_video_info(client: httpx.AsyncClient, url: str, quality=0):
         if manifest_url:
             res = await req_retry(client, manifest_url)
             variants = _parse_hls_variants(res.text)
-            video_url = _pick_hls_by_quality(variants, quality)
+            video_url = _pick_hls_by_quality(variants, quality, codec=codec)
             audio_url = None
             for m in re.finditer(r'#EXT-X-MEDIA:[^\n]*', res.text):
                 seg = m.group(0)
@@ -236,6 +249,78 @@ async def get_video_info(client: httpx.AsyncClient, url: str, quality=0):
     raise APIUnsupportedError('未获取到任何可用视频流（SABR/风控），可尝试登录cookie', video_id)
 
 
+def _walk(obj, key: str):
+    """递归收集dict树中所有指定key的值（应对YouTube响应结构变化，不硬编码路径）"""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == key:
+                yield v
+            yield from _walk(v, key)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk(v, key)
+
+
+async def get_playlist_info(client: httpx.AsyncClient, url: str) -> tuple:
+    """获取YouTube播放列表（get_series语义）: (列表标题, [(video_id, 标题), ...])
+
+    支持分页continuation；新旧两代响应结构双兼容：
+    旧=playlistVideoRenderer，2024+改版=lockupViewModel（解析用递归walker，不硬编码层级路径）。
+    """
+    m = re.search(r'[?&]list=([\w-]+)', url)
+    if not m:
+        raise APIUnsupportedError('无法从url解析播放列表id（需要 playlist?list= 形式）', url)
+    pl_id = m.group(1)
+    items, token, pl_title, pages = [], None, '', 0
+    seen = set()
+    while True:
+        body = {'context': CLIENTS['web']['context'], 'browseId': f'VL{pl_id}'}
+        if token:
+            body['continuation'] = token
+        res = await req_retry(client, BROWSE_URL, method='POST', json=body,
+                              headers={'user-agent': CLIENTS['web']['user-agent'],
+                                       'content-type': 'application/json'})
+        data = res.json()
+        for r in _walk(data, 'playlistVideoRenderer'):  # 旧结构兜底
+            vid = r.get('videoId')
+            title = ''.join(x.get('text', '') for x in (r.get('title') or {}).get('runs') or [])
+            if vid and vid not in seen:
+                seen.add(vid)
+                items.append((vid, legal_title(title)))
+        for r in _walk(data, 'lockupViewModel'):  # 2024+改版结构
+            if 'VIDEO' not in (r.get('contentType') or 'VIDEO').upper():  # LOCKUP_CONTENT_TYPE_VIDEO
+                continue
+            vid = r.get('contentId')
+            if not vid or vid in seen:
+                continue
+            md = (r.get('metadata') or {}).get('lockupMetadataViewModel') or {}
+            title = (md.get('title') or {}).get('content', '')
+            seen.add(vid)
+            items.append((vid, legal_title(title)))
+        if not pl_title:  # 标题多来源尝试（新旧结构不同位置）
+            for pv in _walk(data, 'pageHeaderViewModel'):
+                t = ((pv.get('title') or {}).get('dynamicTextViewModel') or {}).get('text') or {}
+                pl_title = legal_title(t.get('content', ''))
+                break
+        if not pl_title:
+            for mf in _walk(data, 'microformatDataRenderer'):
+                t = mf.get('title')
+                if isinstance(t, str):
+                    pl_title = legal_title(t)
+                elif isinstance(t, dict):
+                    pl_title = legal_title(t.get('simple_text') or ''.join(x.get('text', '') for x in t.get('runs') or []))
+                break
+        tokens = [t.get('token') for t in _walk(data, 'continuationCommand') if t.get('token')]
+        token = tokens[-1] if tokens else None
+        pages += 1
+        if not token or pages > 40:  # 40页保险丝
+            break
+    if not items:
+        raise APIResourceError('播放列表为空或不可访问', pl_id)
+    return pl_title or f'YouTube播放列表-{pl_id}', items
+
+
+@raise_api_error
 async def get_captions(client: httpx.AsyncClient, url_or_id: str, langs: str = '') -> list:
     """获取YouTube字幕轨: [[json3下载地址, 语言名], ...]，langs为语言代码/名称包含过滤（逗号分隔）"""
     video_id = _parse_video_id(url_or_id) if str(url_or_id).startswith('http') else url_or_id

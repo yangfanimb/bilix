@@ -13,12 +13,40 @@ import httpx
 from bilix.cli.assign import auto_assemble
 from bilix.log import logger as dft_logger
 from bilix.download.utils import req_retry, path_check
+from dataclasses import dataclass, field
+from typing import Optional
 from bilix.progress.abc import Progress
 from bilix.progress.cli_progress import CLIProgress
 from bilix.exception import HandleMethodError
 from pathlib import Path, PurePath
 
-__all__ = ['BaseDownloader']
+__all__ = ['BaseDownloader', 'TaskReport']
+
+
+@dataclass
+class TaskReport:
+    """单个下载任务的执行报告，用于下载结束后的总结说明"""
+    name: str
+    video: str = ''  # ''=成功, '已存在', '失败:原因'
+    extra: dict = field(default_factory=dict)  # 附加产物(字幕/弹幕/封面等) -> 状态或失败原因
+    file: str = ''  # 主产物文件路径，用于跨运行跳过判断
+
+    @property
+    def level(self) -> str:
+        if self.video.startswith('失败'):
+            return 'fail'
+        if any(v.startswith('失败') for v in self.extra.values()):
+            return 'partial'
+        if self.video == '已存在':
+            return 'exist'
+        return 'ok'
+
+    def detail(self) -> str:
+        parts = []
+        if self.video.startswith('失败') or self.video == '已存在':
+            parts.append(self.video)
+        parts += [f'{k}{v}' for k, v in self.extra.items() if v.startswith('失败')]
+        return '; '.join(parts)
 
 
 class BaseDownloaderMeta(type):
@@ -114,6 +142,8 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
         self.stream_retry = stream_retry
         # 仅下载音频(-oa)时的输出格式（单文件视频平台据此提取音轨；B站重载了整套逻辑）
         self.audio_format = (audio_format or 'aac').lower()
+        # 下载任务执行报告收集器（供CLI结束时输出总结）
+        self.reports: List[TaskReport] = []
         # active stream number
         self._stream_num = 0
 
@@ -219,6 +249,31 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
             t_real = content_size / cur_speed
             t = t_tgt - t_real
             await asyncio.sleep(t)
+
+    def report(self, name: str, video: str = '', extra: dict = None, file: str = '') -> TaskReport:
+        """记录一个任务报告（供站点子类上报成败，CLI结束统一输出总结）"""
+        r = TaskReport(name=name, video=video, extra=extra or {}, file=file)
+        self.reports.append(r)
+        if r.video.startswith('失败') or any(v.startswith('失败') for v in r.extra.values()):
+            self.logger.warning(f'{r.name} — {r.detail()}')
+        return r
+
+    def print_summary(self):
+        """下载结束后输出总结：全部成功时仅一行，存在异常时列出明细"""
+        from collections import Counter
+        if not self.reports:
+            return
+        levels = Counter(r.level for r in self.reports)
+        label = {'ok': '✅成功', 'exist': '⏭️已存在', 'partial': '⚠️部分失败', 'fail': '❌失败'}
+        head = f'📋 下载总结: 共{len(self.reports)}项 | ' + ' '.join(
+            f'{label[k]}{levels[k]}' for k in sorted(label, key=lambda k: -levels.get(k, 0)) if levels.get(k))
+        if levels.get('fail') or levels.get('partial'):
+            self.logger.warning(head)
+            for r in self.reports:
+                if r.level in ('fail', 'partial'):
+                    self.logger.warning(f'  {label[r.level]} {r.name} — {r.detail()}')
+        else:
+            self.logger.info(head)
 
     def update_cookies_from_browser(self, browser: str):
         try:
