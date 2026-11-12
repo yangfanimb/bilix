@@ -21,7 +21,12 @@ python bx.py v "https://www.douyin.com/video/xxx"                  # 抖音（�
 python bx.py "https://www.tiktok.com/@user/video/xxx"              # TikTok
 python bx.py v "https://www.youtube.com/watch?v=xxx"               # YouTube（自动HLS高清）
 
-# 3. 站点健康自检（接口漂移排查）
+# 字幕：--sub-lang 过滤语言（逗号分隔，对语言名/代码包含匹配，缺省下载全部轨）
+python bx.py v "<链接>" --subtitle --sub-lang 中文                  # 只要中文字幕
+python bx.py v "<链接> -p 3" --subtitle --sub-lang 中文,en          # 中英文字幕
+python bx.py sub "<链接>" --sub-lang 中文                           # 只下载字幕不下载视频
+
+# 站点健康自检（接口漂移排查）
 python bx.py doctor                       # 全量巡检
 python bx.py doctor --site youtube        # 只查某站点
 python bx.py doctor --json                # JSON输出（便于CI）
@@ -74,6 +79,16 @@ python bx.py config -d ~/videos     # 设置默认下载目录
 python bx.py config -q 1080p        # 设置默认画质（数字相对画质如 0/1/2 也可以）
 python bx.py config --reset         # 重置目录与画质
 ```
+
+## info 探测
+
+```bash
+python bx.py info "<链接>"
+```
+
+输出内容：视频标题与分P、播放/点赞/投币数据、**当前账号状态**（已登录用户名/大会员，未登录则提示部分画质不可下）、
+**各画质流清单**（标注最高画质及分辨率，未登录/非会员的画质会标"需要登录或大会员"）、音质清单（默认/杜比/Hi-Res）、
+**字幕轨情况**（中文字幕有无、英文字幕有无、全部语言轨列表）。据此可直接填写 `-q`/`--codec`/`--sub-lang`。
 
 配置优先级：**命令行显式选项 > bx.py 保存的配置 > bilix 默认值**。
 例如命令行里写了 `-d /other/path`，则忽略配置中的目录；写了 `--cookie`/`-fb`，则忽略已保存的 cookie。

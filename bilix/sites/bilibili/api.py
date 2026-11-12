@@ -640,20 +640,33 @@ def _norm_subtitle_url(url: str) -> str:
 
 
 @raise_api_error
-async def get_subtitle_info(client: httpx.AsyncClient, bvid, cid):
+async def get_subtitle_info(client: httpx.AsyncClient, bvid, cid, langs: str = ''):
+    """获取字幕轨信息
+
+    :param bvid:
+    :param cid:
+    :param langs: 语言过滤，逗号分隔（对lan代码与lan_doc做包含匹配，如 '中文,en'），空为全部
+    :param client:
+    """
     params = {'bvid': bvid, 'cid': cid}
     res = await req_retry(client, 'https://api.bilibili.com/x/player/v2', params=params)
     info = json.loads(res.text)
     if info['code'] == -400:
         raise APIError(f'未找到字幕信息', params)
-    subtitles = info['data']['subtitle']['subtitles']
-    result = []
-    for i in subtitles:
+    tracks = []  # (规范化url, 语言名, 语言代码)
+    for i in info['data']['subtitle']['subtitles']:
         url = _norm_subtitle_url(i.get('subtitle_url', ''))
         if not url:  # AI字幕偶发返回空地址，跳过避免拼出非法URL
             logger.warning(f'字幕轨 {i.get("lan_doc", "?")} 地址为空，跳过')
             continue
-        result.append([url, i['lan_doc']])
+        tracks.append((url, i['lan_doc'], i.get('lan', '')))
+    result = [[u, n] for u, n, _ in tracks]
+    if langs:
+        wanted = [v.strip().lower() for v in langs.split(',') if v.strip()]
+        result = [[u, n] for u, n, lan in tracks
+                  if any(v in f'{n} {lan}'.lower() for v in wanted)]
+        if not result:
+            logger.warning(f'没有匹配语言 "{langs}" 的字幕轨，可用: {[n for _, n, _ in tracks]}')
     return result
 
 

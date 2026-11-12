@@ -156,6 +156,10 @@ def print_help():
         '视频及音频编码（可使用info查看后填写，使用:分隔），可使用完整名称（例如avc1.640032，fLaC）或部分名称（例如avc，hev）',
     )
     table.add_row(
+        "--sub-lang", '[dark_cyan]str',
+        '字幕语言过滤，逗号分隔（如 中文,en），对字幕语言名与代码做包含匹配，缺省下载全部字幕轨',
+    )
+    table.add_row(
         "-sl --speed-limit", '[dark_cyan]str',
         '最大下载速度，默认无限制。例如：-sl 1.5MB',
     )
@@ -338,6 +342,12 @@ class BasedTimeRange(click.ParamType):
     'time_range',
     type=BasedTimeRange(),
     default=None,
+)
+@click.option(
+    '--sub-lang',
+    'sub_lang',
+    type=str,
+    default='',
 )
 @click.option(
     '--fast',

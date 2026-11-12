@@ -36,6 +36,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             sess_data: str = None,
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             hierarchy: bool = True,
+            sub_lang: str = '',
     ):
         """
 
@@ -49,6 +50,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param part_concurrency: 媒体分段并发数
         :param video_concurrency: 视频并发数
         :param hierarchy: 是否使用层级目录
+        :param sub_lang: 字幕语言过滤，逗号分隔（如 '中文,en'），空为下载全部字幕轨
         """
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super(DownloaderBilibili, self).__init__(
@@ -66,6 +68,8 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.api_sema = asyncio.Semaphore(video_concurrency)
         self.hierarchy = hierarchy
         self.title_overflow = 50
+        # 字幕语言过滤（--sub-lang），如 '中文,en'；空为下载全部字幕轨
+        self.sub_lang = sub_lang or ''
 
     @classmethod
     def parse_url(cls, url: str):
@@ -497,7 +501,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.logger.info(f"[cyan]已完成[/cyan] {file_name}")
         return file_path
 
-    async def get_subtitle(self, url, path=Path('.'), convert_func=json2srt, video_info=None):
+    async def get_subtitle(self, url, path=Path('.'), convert_func=json2srt, video_info=None, sub_lang: str = None):
         """
         下载视频的字幕文件
         :cli: short: sub
@@ -505,14 +509,16 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param path: 字幕文件保存路径
         :param convert_func: function used to convert original subtitle text
         :param video_info: 额外数据，提供则不再访问前端
+        :param sub_lang: 字幕语言过滤，逗号分隔（如 '中文,en'），None时使用下载器配置
         :return:
         """
         if not video_info:
             video_info = await api.get_video_info(self.client, url)
         p, cid = video_info.p, video_info.cid
         p_name = video_info.pages[p].p_name
+        langs = self.sub_lang if sub_lang is None else sub_lang
         try:
-            subtitles = await api.get_subtitle_info(self.client, video_info.bvid, cid)
+            subtitles = await api.get_subtitle_info(self.client, video_info.bvid, cid, langs=langs)
         except APIError as e:
             return self.logger.warning(e)
         cors = []
