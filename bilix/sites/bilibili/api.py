@@ -304,7 +304,8 @@ class Dash(BaseModel):
         audios = []
         audio_formats = {}
         if dash.get('audio', None):  # some video have NO audio
-            d = dash['audio'][0]
+            # 列表顺序不保证（实测存在[132k,192k,64k]的排列），按bandwidth取最高音质
+            d = max(dash['audio'], key=lambda x: x.get('bandwidth', 0))
             m = Media(quality="default", suffix='.aac', codec=d['codecs'], **d)
             audios.append(m)
             audio_formats[m.quality] = m
