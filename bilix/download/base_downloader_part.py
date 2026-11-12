@@ -31,6 +31,7 @@ class BaseDownloaderPart(BaseDownloader):
             logger=None,
             # unique params
             part_concurrency: int = 10,
+            audio_format: str = 'aac',
     ):
         super(BaseDownloaderPart, self).__init__(
             client=client,
@@ -38,7 +39,8 @@ class BaseDownloaderPart(BaseDownloader):
             stream_retry=stream_retry,
             speed_limit=speed_limit,
             progress=progress,
-            logger=logger
+            logger=logger,
+            audio_format=audio_format
         )
         self.part_concurrency = part_concurrency
 

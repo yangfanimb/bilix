@@ -24,6 +24,7 @@ class DownloaderCctv(BaseDownloaderM3u8):
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             # unique params
             hierarchy: bool = True,
+            audio_format: str = 'aac',
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super(DownloaderCctv, self).__init__(
@@ -35,6 +36,7 @@ class DownloaderCctv(BaseDownloaderM3u8):
             logger=logger,
             part_concurrency=part_concurrency,
             video_concurrency=video_concurrency,
+            audio_format=audio_format,
         )
         self.hierarchy = hierarchy
 
@@ -56,7 +58,8 @@ class DownloaderCctv(BaseDownloaderM3u8):
                 path.mkdir(parents=True, exist_ok=True)
             await asyncio.gather(*[self.get_video(pid, path, quality) for pid in pids])
 
-    async def get_video(self, url_or_pid: str, path=Path('.'), quality: int = 0, time_range: Tuple[int, int] = None):
+    async def get_video(self, url_or_pid: str, path=Path('.'), quality: int = 0, time_range: Tuple[int, int] = None,
+                        only_audio=False):
         """
         :cli: short: v
         :param url_or_pid:
@@ -72,4 +75,6 @@ class DownloaderCctv(BaseDownloaderM3u8):
         title, m3u8_urls = await api.get_media_info(self.client, pid)
         m3u8_url = m3u8_urls[min(quality, len(m3u8_urls) - 1)]
         file_path = await self.get_m3u8_video(m3u8_url, path / f"{title}.mp4", time_range=time_range)
+        if only_audio:  # 仅音频：从成品视频提取音轨
+            file_path = await self.extract_audio(file_path)
         return file_path

@@ -51,10 +51,12 @@ async def concat(path_lst: List[Path], output_path: Path, remove=True):
 async def convert_audio(input_path: Path, output_path: Path, fmt: str = 'm4a', remove=True):
     """音频格式转换/重封装（-oa 配合 --audio-format 使用）
 
-    :param fmt: m4a=无损重封装（不依赖编码器，修复ADTS流时长元数据不准的问题）；
-                mp3=有损转码（自动探测带libmp3lame的ffmpeg）
+    :param fmt: aac=提取ADTS流（.aac）；m4a=无损重封装（不依赖编码器，修复ADTS流时长元数据不准的问题）；
+                mp3=有损转码（自动探测带libmp3lame的ffmpeg）。输入可为视频容器（-vn忽略视频流）
     """
-    if fmt == 'm4a':
+    if fmt == 'aac':  # 从任意容器提取音轨为ADTS
+        cmd = ['ffmpeg', '-y', '-i', str(input_path), '-vn', '-c:a', 'copy', '-f', 'adts', str(output_path)]
+    elif fmt == 'm4a':
         cmd = ['ffmpeg', '-y', '-i', str(input_path), '-vn', '-c:a', 'copy', str(output_path)]
     elif fmt == 'mp3':
         binary = await _ffmpeg_with_mp3_encoder()

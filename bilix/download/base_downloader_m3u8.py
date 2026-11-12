@@ -32,6 +32,7 @@ class BaseDownloaderM3u8(BaseDownloader):
             # unique params
             part_concurrency: int = 10,
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
+            audio_format: str = 'aac',
     ):
         super(BaseDownloaderM3u8, self).__init__(
             client=client,
@@ -39,7 +40,8 @@ class BaseDownloaderM3u8(BaseDownloader):
             stream_retry=stream_retry,
             speed_limit=speed_limit,
             progress=progress,
-            logger=logger
+            logger=logger,
+            audio_format=audio_format
         )
         self.v_sema = asyncio.Semaphore(video_concurrency) if isinstance(video_concurrency, int) else video_concurrency
         self.part_concurrency = part_concurrency

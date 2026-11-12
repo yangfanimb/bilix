@@ -22,6 +22,7 @@ class DownloaderHanime1(BaseDownloaderM3u8, BaseDownloaderPart):
             logger=None,
             part_concurrency: int = 10,
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
+            audio_format: str = 'aac',
     ):
         self.client = client or httpx.AsyncClient(**api.dft_client_settings)
         super().__init__(
@@ -33,9 +34,11 @@ class DownloaderHanime1(BaseDownloaderM3u8, BaseDownloaderPart):
             logger=logger,
             part_concurrency=part_concurrency,
             video_concurrency=video_concurrency,
+            audio_format=audio_format,
         )
 
-    async def get_video(self, url: str, path=Path('.'), image=False, time_range: Tuple[int, int] = None):
+    async def get_video(self, url: str, path=Path('.'), image=False, time_range: Tuple[int, int] = None,
+                        only_audio=False):
         """
         :cli: short: v
         :param url:
@@ -53,3 +56,5 @@ class DownloaderHanime1(BaseDownloaderM3u8, BaseDownloaderPart):
         if image:
             cors.append(self.get_static(video_info.img_url, path=path / video_info.title))
         await asyncio.gather(*cors)
+        if only_audio:  # 仅音频：从成品视频提取音轨
+            await self.extract_audio(path / f'{video_info.title}.mp4')

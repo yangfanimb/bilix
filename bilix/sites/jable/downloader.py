@@ -23,6 +23,7 @@ class DownloaderJable(BaseDownloaderM3u8):
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             # unique params
             hierarchy: bool = True,
+            audio_format: str = 'aac',
 
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)
@@ -35,6 +36,7 @@ class DownloaderJable(BaseDownloaderM3u8):
             logger=logger,
             part_concurrency=part_concurrency,
             video_concurrency=video_concurrency,
+            audio_format=audio_format,
         )
         self.hierarchy = hierarchy
 
@@ -53,7 +55,8 @@ class DownloaderJable(BaseDownloaderM3u8):
             path.mkdir(parents=True, exist_ok=True)
         await asyncio.gather(*[self.get_video(url, path, image) for url in data['urls']])
 
-    async def get_video(self, url: str, path=Path("."), image=True, time_range: Tuple[int, int] = None):
+    async def get_video(self, url: str, path=Path("."), image=True, time_range: Tuple[int, int] = None,
+                        only_audio=False):
         """
         :cli: short: v
         :param url:
@@ -71,3 +74,5 @@ class DownloaderJable(BaseDownloaderM3u8):
         if image:
             cors.append(self.get_static(video_info.img_url, path=path / video_info.title, ))
         await asyncio.gather(*cors)
+        if only_audio:  # 仅音频：从成品视频提取音轨
+            await self.extract_audio(path / f"{video_info.title}.mp4")

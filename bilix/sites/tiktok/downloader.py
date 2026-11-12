@@ -21,6 +21,7 @@ class DownloaderTiktok(BaseDownloaderPart):
             progress=None,
             logger=None,
             part_concurrency: int = 10,
+            audio_format: str = 'aac',
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super(DownloaderTiktok, self).__init__(
@@ -31,9 +32,10 @@ class DownloaderTiktok(BaseDownloaderPart):
             progress=progress,
             logger=logger,
             part_concurrency=part_concurrency,
+            audio_format=audio_format,
         )
 
-    async def get_video(self, url: str, path=Path('.'), image=False):
+    async def get_video(self, url: str, path=Path('.'), image=False, only_audio=False):
         """
         :cli: short: v
         :param url:
@@ -48,3 +50,5 @@ class DownloaderTiktok(BaseDownloaderPart):
         if image:
             cors.append(self.get_static(video_info.cover, path=path / title, ))
         await asyncio.gather(*cors)
+        if only_audio:  # 仅音频：从成品视频提取音轨
+            await self.extract_audio(path / f'{title}.mp4')

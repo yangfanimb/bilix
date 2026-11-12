@@ -9,6 +9,7 @@
 详见 docs/dev/site-support-status.md 平台方案记录。
 """
 import re
+import json
 from typing import Optional
 from pydantic import BaseModel
 import httpx
@@ -85,6 +86,10 @@ def _pick_adaptive(streams: list, mime_prefix: str, prefer_itags=()) -> dict | N
 
 def _parse_hls_manifest(manifest_text: str) -> tuple[str, str | None]:
     """从 master 清单解析出（最高画质视频清单URL, 音频清单URL）"""
+    videos = _parse_hls_variants(manifest_text)
+    if not videos:
+        raise APIUnsupportedError('HLS master清单中未找到视频流', manifest_text[:100])
+    video_url = max(videos, key=lambda v: v[1])[0]
     # 音频：EXT-X-MEDIA 行中 TYPE=AUDIO 的 URI（优先 DEFAULT=YES；属性顺序不定，逐行判断）
     audio_url = None
     for m in re.finditer(r'#EXT-X-MEDIA:[^\n]*', manifest_text):
@@ -94,20 +99,100 @@ def _parse_hls_manifest(manifest_text: str) -> tuple[str, str | None]:
         uri = re.search(r'URI="([^"]+)"', seg)
         if uri and (audio_url is None or 'DEFAULT=YES' in seg.upper()):
             audio_url = uri.group(1)
-    # 视频：EXT-X-STREAM-INF 的 URI，取 BANDWIDTH 最高
-    video_url, best_bw = None, -1
-    for m in re.finditer(r'#EXT-X-STREAM-INF:[^\n]*BANDWIDTH=(\d+)[^\n]*\n([^\n#][^\n]*)', manifest_text):
-        bw = int(m.group(1))
-        if bw > best_bw:
-            best_bw = bw
-            video_url = m.group(2).strip()
-    if not video_url:
-        raise APIUnsupportedError('HLS master清单中未找到视频流', manifest_text[:100])
     return video_url, audio_url
 
 
+def _parse_hls_variants(manifest_text: str) -> list:
+    """解析 master 清单的视频分轨: [(清单URL, 高度, BANDWIDTH)]，按高度降序"""
+    variants = []
+    for m in re.finditer(r'#EXT-X-STREAM-INF:[^\n]*\n([^\n#][^\n]*)', manifest_text):
+        attrs = m.group(0)
+        res = re.search(r'RESOLUTION=(\d+)x(\d+)', attrs)
+        bw = int(re.search(r'BANDWIDTH=(\d+)', attrs).group(1)) if re.search(r'BANDWIDTH=(\d+)', attrs) else 0
+        height = int(res.group(2)) if res else 0
+        variants.append((m.group(1).strip(), height, bw))
+    return sorted(variants, key=lambda v: -v[1])
+
+
+def _pick_hls_by_quality(variants: list, quality) -> str:
+    """按画质参数选择视频分轨: 0/None=最高；'1080p'字符串=高度≤目标的最大者，无则取最接近的"""
+    if not variants:
+        raise APIUnsupportedError('HLS master清单中未找到视频流', '')
+    if not quality:
+        return variants[0][0]
+    if isinstance(quality, str):
+        m = re.match(r'(\d+)\s*p', quality.strip().lower())
+        target = int(m.group(1)) if m else None
+    else:  # 数字按B站语义是相对档位，youtube简化为: 0最高，n=第n高
+        if isinstance(quality, int) and 0 < quality <= len(variants):
+            return variants[quality - 1][0]
+        return variants[0][0]
+    if target is None:
+        return variants[0][0]
+    fit = [v for v in variants if v[1] <= target]
+    return (fit[0] if fit else variants[-1])[0]  # ≤目标取最大，否则取最小的向上兜底
+
+
+def _get_caption_tracks(player_data: dict) -> list:
+    """从player response解析字幕轨: [(baseUrl, 语言名, 语言代码)]"""
+    tracks = []
+    renderer = ((data_captions := player_data.get('captions')) or {}).get('playerCaptionsTracklistRenderer') or {}
+    for t in renderer.get('captionTracks') or []:
+        name = ''.join(r.get('text', '') for r in (t.get('name') or {}).get('runs') or []) or t.get('languageCode', '')
+        tracks.append((t['baseUrl'], name, t.get('languageCode', '')))
+    return tracks
+
+
+def convert_subtitle(content: bytes) -> bytes:
+    """YouTube字幕转SRT：自动识别 timedtext XML（默认返回格式）与 json3 两种格式"""
+    text_head = content[:200].lstrip()
+    if text_head.startswith(b'<?xml') or b'<timedtext' in text_head:
+        import xml.etree.ElementTree as ET
+        out, idx = [], 0
+        root = ET.fromstring(content)
+
+        def fmt(ms: int) -> str:
+            h, ms = divmod(ms, 3600000)
+            m, ms = divmod(ms, 60000)
+            s, ms = divmod(ms, 1000)
+            return f'{h:02}:{m:02}:{s:02},{ms:03}'
+
+        for p in root.iter('p'):
+            text = ''.join(p.itertext()).replace('\n', ' ').strip()
+            if not text:
+                continue
+            idx += 1
+            start = int(p.get('t', 0))
+            dur = int(p.get('d', 2000))
+            out.append(f'{idx}\n{fmt(start)} --> {fmt(start + dur)}\n{text}\n')
+        return '\n'.join(out).encode()
+    # json3 格式
+    data = json.loads(content)
+    out, idx = [], 0
+
+    def fmt(ms: int) -> str:
+        h, ms = divmod(ms, 3600000)
+        m, ms = divmod(ms, 60000)
+        s, ms = divmod(ms, 1000)
+        return f'{h:02}:{m:02}:{s:02},{ms:03}'
+
+    for ev in data.get('events') or []:
+        text = ''.join(seg.get('utf8', '') for seg in ev.get('segs') or []).replace('\n', ' ').strip()
+        if not text:
+            continue
+        idx += 1
+        start = ev.get('tStartMs', 0)
+        dur = ev.get('dDurationMs', 2000)
+        out.append(f'{idx}\n{fmt(start)} --> {fmt(start + dur)}\n{text}\n')
+    return '\n'.join(out).encode()
+
+
 @raise_api_error
-async def get_video_info(client: httpx.AsyncClient, url: str):
+async def get_video_info(client: httpx.AsyncClient, url: str, quality=0):
+    """获取YouTube视频信息
+
+    :param quality: 画质选择，0=最高；'1080p'等字符串=高度≤目标的最大者（HLS路径生效）
+    """
     video_id = _parse_video_id(url)
     data = await _player(client, 'android', video_id)
     title = legal_title(data['videoDetails']['title'])
@@ -122,13 +207,22 @@ async def get_video_info(client: httpx.AsyncClient, url: str):
             return VideoInfo(title=title, video_url=video['url'],
                              audio_url=audio['url'] if audio else None)
 
-    # 2. IOS HLS：免PO token获取高清分轨
+    # 2. IOS HLS：免PO token获取高清分轨（支持画质选择）
     try:
         ios_data = await _player(client, 'ios', video_id)
         manifest_url = (ios_data.get('streamingData') or {}).get('hlsManifestUrl')
         if manifest_url:
             res = await req_retry(client, manifest_url)
-            video_url, audio_url = _parse_hls_manifest(res.text)
+            variants = _parse_hls_variants(res.text)
+            video_url = _pick_hls_by_quality(variants, quality)
+            audio_url = None
+            for m in re.finditer(r'#EXT-X-MEDIA:[^\n]*', res.text):
+                seg = m.group(0)
+                if 'TYPE=AUDIO' not in seg:
+                    continue
+                uri = re.search(r'URI="([^"]+)"', seg)
+                if uri and (audio_url is None or 'DEFAULT=YES' in seg.upper()):
+                    audio_url = uri.group(1)
             return VideoInfo(title=title, video_url=video_url, audio_url=audio_url, hls=True)
     except (APIUnsupportedError, APIResourceError):
         raise
@@ -140,6 +234,23 @@ async def get_video_info(client: httpx.AsyncClient, url: str):
     if muxed and muxed.get('url'):
         return VideoInfo(title=title, video_url=muxed['url'], audio_url=None)
     raise APIUnsupportedError('未获取到任何可用视频流（SABR/风控），可尝试登录cookie', video_id)
+
+
+async def get_captions(client: httpx.AsyncClient, url_or_id: str, langs: str = '') -> list:
+    """获取YouTube字幕轨: [[json3下载地址, 语言名], ...]，langs为语言代码/名称包含过滤（逗号分隔）"""
+    video_id = _parse_video_id(url_or_id) if str(url_or_id).startswith('http') else url_or_id
+    data = await _player(client, 'android', video_id)
+    tracks = _get_caption_tracks(data)
+    result = [[f"{base}&fmt=json3", name] for base, name, _ in tracks]
+    if langs:
+        wanted = [v.strip().lower() for v in langs.split(',') if v.strip()]
+        filtered = [[u, n] for (u, n), (_, name, code) in zip(result, tracks)
+                    if any(v in f'{name} {code}'.lower() for v in wanted)]
+        if not filtered:
+            from bilix.log import logger
+            logger.warning(f'没有匹配语言 "{langs}" 的YouTube字幕轨，可用: {[n for _, n in result]}')
+        result = filtered
+    return result
 
 
 if __name__ == '__main__':

@@ -20,11 +20,13 @@ python bx.py cate 连载动画 -n 10                                    # 分区
 python bx.py v "https://www.douyin.com/video/xxx"                  # 抖音（无水印）
 python bx.py "https://www.tiktok.com/@user/video/xxx"              # TikTok
 python bx.py v "https://www.youtube.com/watch?v=xxx"               # YouTube（自动HLS高清）
+python bx.py v "https://www.youtube.com/watch?v=xxx" -q 720p        # YouTube画质选择
+python bx.py v "https://www.youtube.com/watch?v=xxx" --subtitle --sub-lang en   # YouTube CC字幕
 
 # 字幕：--sub-lang 过滤语言（逗号分隔，对语言名/代码包含匹配，缺省下载全部轨）
 python bx.py v "<链接>" --subtitle --sub-lang 中文                  # 只要中文字幕
 python bx.py v "<链接> -p 3" --subtitle --sub-lang 中文,en          # 中英文字幕
-python bx.py sub "<链接>" --sub-lang 中文                           # 只下载字幕不下载视频
+python bx.py sub "<链接>" --sub-lang 中文                           # 只下载字幕（B站/YouTube均可用）
 
 # 仅音频：-oa 配合 --audio-format 选择输出格式
 python bx.py v "<链接>" -oa                                         # 原始AAC流（默认）

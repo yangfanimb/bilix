@@ -93,6 +93,7 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
             stream_retry: int = 5,
             progress: Progress = None,
             logger: logging.Logger = None,
+            audio_format: str = 'aac',
     ):
         """
 
@@ -100,18 +101,37 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
         :param browser: load cookies from which browser
         :param speed_limit: global download rate for the downloader, should be a number (Byte/s unit)
         :param progress: progress obj
+        :param audio_format: 仅下载音频(-oa)时的输出格式: aac/m4a/mp3
         """
         # use cli progress by default
         self.progress = progress or CLIProgress()
         self.logger = logger or dft_logger
         self.client = client if client else httpx.AsyncClient(headers={'user-agent': 'PostmanRuntime/7.29.0'})
-        if browser:  # load cookies from browser, may need auth
+        if browser:  # load cookies from browser
             self.update_cookies_from_browser(browser)
         assert speed_limit is None or speed_limit > 0
         self.speed_limit = speed_limit
         self.stream_retry = stream_retry
+        # 仅下载音频(-oa)时的输出格式（单文件视频平台据此提取音轨；B站重载了整套逻辑）
+        self.audio_format = (audio_format or 'aac').lower()
         # active stream number
         self._stream_num = 0
+
+    async def extract_audio(self, video_file: Path) -> Path:
+        """从成品视频文件提取音轨（-oa，单文件视频平台通用后处理）。
+
+        按self.audio_format转换: aac/m4a无损提取, mp3转码。转换失败时保留视频文件并抛出异常。
+        :return: 音频文件路径
+        """
+        from bilix import ffmpeg as _ffmpeg
+        video_file = Path(video_file)
+        audio_file = video_file.with_suffix(f'.{self.audio_format}')
+        try:
+            await _ffmpeg.convert_audio(video_file, audio_file, fmt=self.audio_format)
+            video_file.unlink(missing_ok=True)  # -oa语义：不保留视频
+        except Exception as e:
+            raise RuntimeError(f'音频提取({self.audio_format})失败，保留视频文件: {e}') from e
+        return audio_file
 
     async def __aenter__(self):
         await self.client.__aenter__()
