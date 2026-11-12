@@ -109,6 +109,7 @@ python bx.py info "<链接>"
 ## 常见问题
 
 - **下载结束后总结**：全部成功输出一行计数；存在异常时逐项列出（❌视频失效 / ⚠️字幕(语言)失败 等），便于批量下载后核对
+- **直接 `./bx.py` 执行报 "Can't find any handler"**：shebang 选到的 `python3` 可能缺少 bilix 依赖，站点模块被静默跳过。bx.py 会自动探测可用解释器（仓库 .venv / python3.12 / pyenv versions）并切换重执行；也可用环境变量 `BX_PYTHON` 显式指定，或改用独立环境的 `./bx` 启动器。
 - **提示缺少依赖**：脚本依赖 bilix 本体及其依赖（httpx、browser_cookie3 等），请先 `pip install -e /opt/workspace/bilix/src`；
 - **从浏览器读取失败**：Chrome 新版本可能加密 cookie，或浏览器正在运行导致数据库被锁——改用交互式粘贴；
 - **下载报 412/风控**：多由匿名高频访问引起，配置 cookie 后可显著缓解，脚本内置重试也会兜底。
