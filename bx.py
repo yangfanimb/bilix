@@ -25,6 +25,7 @@
 功能参数 × 平台支持（✅可用 ➖平台无此数据）:
   --subtitle 字幕        B站✅ YouTube✅｜douyin/tiktok/cctv/jable/hanime1 ➖（平台无CC字幕接口）
   --sub-lang 字幕语言    B站✅ YouTube✅（配合--subtitle，如 --sub-lang 中文,en）
+  --sub-wait 等待生成    B站✅（AI字幕轨动态生成，指定语言暂无时轮询等待，如 --sub-wait 300）
   -oa 仅音频             全平台✅（B站取分离音轨；youtube只下音频轨；其余从成品视频提取）
   --audio-format         全平台✅ 默认m4a（配合-oa: m4a=无损重封装·时长正确, aac=原始流, mp3=转码）
   -q 画质               B站✅ YouTube✅ CCTV✅｜douyin/tiktok/jable/hanime1 ➖（平台单一画质）

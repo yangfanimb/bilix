@@ -642,7 +642,7 @@ def _norm_subtitle_url(url: str) -> str:
 
 @raise_api_error
 async def get_subtitle_info(client: httpx.AsyncClient, bvid, cid, langs: str = ''):
-    """获取字幕轨信息
+    """获取字幕轨信息: [[规范化url, 语言名, 语言代码], ...]
 
     :param bvid:
     :param cid:
@@ -661,13 +661,14 @@ async def get_subtitle_info(client: httpx.AsyncClient, bvid, cid, langs: str = '
             logger.warning(f'字幕轨 {i.get("lan_doc", "?")} 地址为空，跳过')
             continue
         tracks.append((url, i['lan_doc'], i.get('lan', '')))
-    result = [[u, n] for u, n, _ in tracks]
+    result = [[u, n, lan] for u, n, lan in tracks]
     if langs:
         wanted = [v.strip().lower() for v in langs.split(',') if v.strip()]
-        result = [[u, n] for u, n, lan in tracks
+        result = [[u, n, lan] for u, n, lan in tracks
                   if any(v in f'{n} {lan}'.lower() for v in wanted)]
         if not result:
-            logger.warning(f'没有匹配语言 "{langs}" 的字幕轨，可用: {[n for _, n, _ in tracks]}')
+            # AI字幕轨会动态生成/波动，这里降级为debug；调用方可配合轮询等待
+            logger.debug(f'没有匹配语言 "{langs}" 的字幕轨，可用: {[n for _, n, _ in tracks]}')
     return result
 
 

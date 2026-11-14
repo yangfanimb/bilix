@@ -41,6 +41,7 @@ class DownloaderBilibili(BaseDownloaderPart):
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             hierarchy: bool = True,
             sub_lang: str = '',
+            sub_wait: int = 0,
             audio_format: str = 'm4a',
     ):
         """
@@ -56,6 +57,7 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param video_concurrency: 视频并发数
         :param hierarchy: 是否使用层级目录
         :param sub_lang: 字幕语言过滤，逗号分隔（如 '中文,en'），空为下载全部字幕轨
+        :param sub_wait: 请求的字幕语言不存在时轮询等待B站生成的秒数（0=不等待）
         :param audio_format: 仅下载音频(-oa)时的输出格式，默认m4a=无损重封装(时长元数据正确)；aac=原始ADTS流；mp3=转码(需libmp3lame)
         """
         client = client or httpx.AsyncClient(**api.dft_client_settings)
@@ -76,6 +78,8 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.title_overflow = 50
         # 字幕语言过滤（--sub-lang），如 '中文,en'；空为下载全部字幕轨
         self.sub_lang = sub_lang or ''
+        # 请求的语言暂无字幕轨时的轮询等待秒数（--sub-wait，AI字幕轨会动态生成）
+        self.sub_wait = max(0, int(sub_wait or 0))
         # 仅下载音频(-oa)时的输出格式: aac原始流 / m4a无损重封装 / mp3转码
         self.audio_format = (audio_format or 'aac').lower()
         # 下载任务执行报告收集器（供CLI结束时输出总结）
@@ -607,7 +611,8 @@ class DownloaderBilibili(BaseDownloaderPart):
         self.logger.info(f"[cyan]已完成[/cyan] {file_name}")
         return file_path
 
-    async def get_subtitle(self, url, path=Path('.'), convert_func=json2srt, video_info=None, sub_lang: str = None):
+    async def get_subtitle(self, url, path=Path('.'), convert_func=json2srt, video_info=None,
+                           sub_lang: str = None, wait: int = None):
         """
         下载视频的字幕文件
         :cli: short: sub
@@ -616,21 +621,38 @@ class DownloaderBilibili(BaseDownloaderPart):
         :param convert_func: function used to convert original subtitle text
         :param video_info: 额外数据，提供则不再访问前端
         :param sub_lang: 字幕语言过滤，逗号分隔（如 '中文,en'），None时使用下载器配置
-        :return:
+        :param wait: 请求的语言暂无字幕轨时轮询等待的秒数（AI字幕轨会动态生成），None时使用下载器配置
+        :return: (成功的字幕路径列表, 失败明细[(语言名, 异常)])
         """
         if not video_info:
             video_info = await api.get_video_info(self.client, url)
         p, cid = video_info.p, video_info.cid
         p_name = video_info.pages[p].p_name
         langs = self.sub_lang if sub_lang is None else sub_lang
+        wait_s = self.sub_wait if wait is None else max(0, int(wait))
         try:
-            subtitles = await api.get_subtitle_info(self.client, video_info.bvid, cid, langs=langs)
+            subtitles = await api.get_subtitle_info(self.client, video_info.bvid, cid)
         except APIError as e:
             return self.logger.warning(e) or ([], [(f'{p_name}字幕', e)])
+        if langs and not subtitles and wait_s > 0:
+            # AI字幕轨会动态生成/波动（实测同视频每次请求随机返回ai-zh/ai-en）：
+            # 轮询等待指定的语言出现，每次查询都必须带语言过滤
+            import time as _time
+            deadline = _time.time() + wait_s
+            while not subtitles and _time.time() < deadline:
+                remain = int(deadline - _time.time())
+                self.logger.info(f'暂无匹配 "{langs}" 的字幕轨，等待波动/生成...（剩余{remain}s，每30s查询一次）')
+                await asyncio.sleep(min(30, remain))
+                try:
+                    subtitles = await api.get_subtitle_info(self.client, video_info.bvid, cid, langs=langs)
+                except APIError as e:
+                    return self.logger.warning(e) or ([], [(f'{p_name}字幕', e)])
+            if not subtitles:
+                self.logger.warning(f'等待{wait_s}s后仍无匹配 "{langs}" 的字幕轨')
         cors = []
         names = []
 
-        for sub_url, sub_name in subtitles:
+        for sub_url, sub_name, _lan in subtitles:
             if len(video_info.title) > self.title_overflow and self.hierarchy and p_name:
                 file_name = legal_title(p_name, sub_name)
             else:

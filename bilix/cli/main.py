@@ -160,6 +160,10 @@ def print_help():
         '字幕语言过滤，逗号分隔（如 中文,en），对字幕语言名与代码做包含匹配，缺省下载全部字幕轨',
     )
     table.add_row(
+        "--sub-wait", '[dark_cyan]int',
+        '请求的字幕语言暂无时轮询等待B站AI生成的秒数（AI字幕轨会动态生成，如 --sub-wait 300）',
+    )
+    table.add_row(
         "--audio-format", '[dark_cyan]aac|m4a|mp3',
         '仅下载音频(-oa)时的输出格式，默认m4a无损重封装（时长元数据正确）；aac=原始流；mp3=转码（需ffmpeg带libmp3lame）',
     )
@@ -352,6 +356,12 @@ class BasedTimeRange(click.ParamType):
     'sub_lang',
     type=str,
     default='',
+)
+@click.option(
+    '--sub-wait',
+    'sub_wait',
+    type=int,
+    default=0,
 )
 @click.option(
     '--audio-format',

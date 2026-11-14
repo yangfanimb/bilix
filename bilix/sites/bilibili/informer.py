@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from typing import Tuple
 from rich.tree import Tree
 from .downloader import DownloaderBilibili
@@ -62,9 +63,10 @@ class InformerBilibili(DownloaderBilibili):
         sub_desc = '获取失败'
         try:
             subs = await api.get_subtitle_info(self.client, video_info.bvid, video_info.cid)
-            names = [n for _, n in subs]
-            has_zh = any('中' in n or 'zh' in n.lower() for n in names)
-            has_en = any('英' in n or 'english' in n.lower() for n in names)
+            names = [f'{n}{"(AI)" if lan.lower().startswith("ai") else ""}' for _, n, lan in subs]
+            probe = ' '.join(f'{n} {lan}' for _, n, lan in subs).lower()
+            has_zh = '中' in probe or 'zh' in probe
+            has_en = '英' in probe or 'english' in probe or re.search(r'\ben\b', probe)
             sub_desc = (f"中文:{'有' if has_zh else '无'} 英文:{'有' if has_en else '无'}"
                         f" | 共{len(names)}轨: {', '.join(names) if names else '无字幕轨'}")
         except Exception as e:

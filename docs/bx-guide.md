@@ -58,6 +58,7 @@ python bx.py doctor --json                # JSON输出（便于CI）
 |---|---|---|
 | `--subtitle` 字幕 | B站 / YouTube | douyin/tiktok/cctv 等平台无 CC 字幕接口 |
 | `--sub-lang` 语言过滤 | B站 / YouTube | 配合 `--subtitle`，如 `--sub-lang 中文,en` |
+| `--sub-wait` 等待生成 | B站 | AI字幕轨动态生成/波动，指定语言暂无时轮询等待（如 `--sub-wait 300`） |
 | `-oa` 仅音频 | **全平台** | B站取分离音轨；YouTube 只下音频轨；其余从成品视频提取 |
 | `--audio-format` | **全平台** | 配合 `-oa`，**默认 `m4a`**（无损重封装，时长元数据正确）；`aac`=原始流；`mp3`=转码 |
 | `-q` 画质 | B站 / YouTube / CCTV | douyin/tiktok/jable/hanime1 平台为单一画质 |
