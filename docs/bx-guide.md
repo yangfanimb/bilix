@@ -52,6 +52,25 @@ python bx.py doctor --json                # JSON输出（便于CI）
 | `info` | 查看资源详情 | info |
 | （直接传 url） | 自动识别站点与类型（bilibili/douyin/tiktok/youtube/cctv/jable） | auto |
 
+## 功能参数 × 平台支持（✅可用 ➖平台无此数据）
+
+| 参数 | 支持平台 | 说明 |
+|---|---|---|
+| `--subtitle` 字幕 | B站 / YouTube | douyin/tiktok/cctv 等平台无 CC 字幕接口 |
+| `--sub-lang` 语言过滤 | B站 / YouTube | 配合 `--subtitle`，如 `--sub-lang 中文,en` |
+| `-oa` 仅音频 | **全平台** | B站取分离音轨；YouTube 只下音频轨；其余从成品视频提取 |
+| `--audio-format` | **全平台** | 配合 `-oa`：`aac`=原始流 / `m4a`=无损重封装（推荐，时长元数据正确）/ `mp3`=转码 |
+| `-q` 画质 | B站 / YouTube / CCTV | douyin/tiktok/jable/hanime1 平台为单一画质 |
+| `--codec` 编码过滤 | B站 / YouTube | 如 `avc`/`hev`/`vp09` |
+| `--dm` 弹幕转 ASS | 仅 B站 | |
+| `--image` 封面 | B站 / douyin / tiktok / jable / hanime1 | YouTube/CCTV 无独立封面 |
+| `--time-range` 切片 | B站 / CCTV / jable / hanime1 | |
+| `-n` 数量 | B站(up/fav/cate/col) / YouTube 播放列表 | YouTube 默认 10，`-n 0`=全部 |
+| `-p` 分P范围 | B站(s) | |
+| `info` 探测 | B站 / YouTube | 画质/编码/字幕语言/账号状态等 |
+
+> 权威明细（含已知限制与失效状态）：`docs/dev/site-support-status.md`；`python bx.py doctor` 可随时巡检各站点健康度。
+
 `bilix` 原有的全部选项（`-q` 画质、`-n` 数量、`--dm` 弹幕、`--subtitle` 字幕、`-oa` 仅音频、`--dm` 弹幕、`-sl` 限速等）原样可用。
 
 ## Cookie 管理

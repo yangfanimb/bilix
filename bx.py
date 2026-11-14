@@ -22,6 +22,20 @@
 已支持站点: bilibili(全功能) / douyin / tiktok / youtube(含HLS高清) / cctv / jable
             hanime1(需-fb导入浏览器cookie过Cloudflare) ；yhdmp/yinghuacd 站点失联暂不可用
 
+功能参数 × 平台支持（✅可用 ➖平台无此数据）:
+  --subtitle 字幕        B站✅ YouTube✅｜douyin/tiktok/cctv/jable/hanime1 ➖（平台无CC字幕接口）
+  --sub-lang 字幕语言    B站✅ YouTube✅（配合--subtitle，如 --sub-lang 中文,en）
+  -oa 仅音频             全平台✅（B站取分离音轨；youtube只下音频轨；其余从成品视频提取）
+  --audio-format         全平台✅（配合-oa: aac=原始流, m4a=无损重封装·推荐, mp3=转码）
+  -q 画质               B站✅ YouTube✅ CCTV✅｜douyin/tiktok/jable/hanime1 ➖（平台单一画质）
+  --codec 编码过滤       B站✅ YouTube✅（avc/hev/vp09）
+  --dm 弹幕转ASS         仅B站
+  --image 封面           B站/douyin/tiktok/jable/hanime1 ✅｜YouTube/CCTV ➖
+  -tr 时间切片           B站/CCTV/jable/hanime1 ✅
+  -n 数量                B站(up/fav/cate/col) ✅ YouTube(播放列表,默认10,0=全部) ✅
+  -p 分P范围             B站(s) ✅
+  info 探测              B站✅(画质/编码/字幕语言/账号状态) YouTube✅(画质档位/字幕/时长)
+
 示例:
   python bx.py login                          # 首次配置cookie（B站）
   python bx.py v "https://www.bilibili.com/video/BV1GJ411x7h7"
@@ -31,6 +45,8 @@
   python bx.py v "https://www.douyin.com/video/xxx"       # 抖音
   python bx.py "https://www.tiktok.com/@user/video/xxx"   # TikTok（url自动识别）
   python bx.py v "https://www.youtube.com/watch?v=xxx"    # YouTube（自动选HLS高清）
+  python bx.py v "<链接>" --subtitle --sub-lang 中文,en   # 中英文字幕（B站/YouTube）
+  python bx.py v "<链接>" -oa --audio-format m4a          # 仅音频（全平台，m4a时长元数据正确）
   python bx.py cate 连载动画 -n 10             # 临时覆盖画质: -q 1080p
   python bx.py doctor                         # 站点健康巡检
 
@@ -39,6 +55,7 @@
   - SESSDATA 获取方式: 浏览器登录b站 → F12 → 应用/Storage → Cookies → 复制 SESSDATA 的值
   - 显式传入 --cookie / -fb 时以命令行为准，忽略已保存配置
   - cookie 仅B站下载需要；douyin/tiktok/youtube/cctv 等无需登录
+  - 各站点功能状态与已知限制的权威明细: docs/dev/site-support-status.md
 """
 import json
 import os
