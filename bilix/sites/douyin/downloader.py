@@ -21,7 +21,7 @@ class DownloaderDouyin(BaseDownloaderPart):
             progress=None,
             logger=None,
             part_concurrency: int = 10,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super(DownloaderDouyin, self).__init__(

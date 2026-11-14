@@ -29,9 +29,9 @@ python bx.py v "<链接> -p 3" --subtitle --sub-lang 中文,en          # 中英
 python bx.py sub "<链接>" --sub-lang 中文                           # 只下载字幕（B站/YouTube均可用）
 
 # 仅音频：-oa 配合 --audio-format 选择输出格式
-python bx.py v "<链接>" -oa                                         # 原始AAC流（默认）
-python bx.py v "<链接>" -oa --audio-format m4a                      # 无损重封装M4A（时长元数据正确，推荐）
+python bx.py v "<链接>" -oa                                         # 默认输出M4A（无损重封装，时长元数据正确）
 python bx.py v "<链接>" -oa --audio-format mp3                      # 转码MP3（自动探测带lame的ffmpeg）
+python bx.py v "<链接>" -oa --audio-format aac                      # 原始AAC流（不重封装）
 
 # 站点健康自检（接口漂移排查）
 python bx.py doctor                       # 全量巡检
@@ -59,7 +59,7 @@ python bx.py doctor --json                # JSON输出（便于CI）
 | `--subtitle` 字幕 | B站 / YouTube | douyin/tiktok/cctv 等平台无 CC 字幕接口 |
 | `--sub-lang` 语言过滤 | B站 / YouTube | 配合 `--subtitle`，如 `--sub-lang 中文,en` |
 | `-oa` 仅音频 | **全平台** | B站取分离音轨；YouTube 只下音频轨；其余从成品视频提取 |
-| `--audio-format` | **全平台** | 配合 `-oa`：`aac`=原始流 / `m4a`=无损重封装（推荐，时长元数据正确）/ `mp3`=转码 |
+| `--audio-format` | **全平台** | 配合 `-oa`，**默认 `m4a`**（无损重封装，时长元数据正确）；`aac`=原始流；`mp3`=转码 |
 | `-q` 画质 | B站 / YouTube / CCTV | douyin/tiktok/jable/hanime1 平台为单一画质 |
 | `--codec` 编码过滤 | B站 / YouTube | 如 `avc`/`hev`/`vp09` |
 | `--dm` 弹幕转 ASS | 仅 B站 | |

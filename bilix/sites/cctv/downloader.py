@@ -24,7 +24,7 @@ class DownloaderCctv(BaseDownloaderM3u8):
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
             # unique params
             hierarchy: bool = True,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)
         super(DownloaderCctv, self).__init__(

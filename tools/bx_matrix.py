@@ -29,7 +29,7 @@ CASES = [
     # ---- A. bilibili（cookie 由 bx 自动注入）----
     ('bili-video-basic',      ['v', BILI_V], 180, ('files', '*.mp4', 500_000)),
     ('bili-video-sub-DM-img', ['v', BILI_V, '--subtitle', '--dm', '--image'], 240, ('files', '*.srt', 100)),
-    ('bili-video-only-audio', ['v', BILI_V, '-oa'], 180, ('files', '*.aac', 500_000)),
+    ('bili-video-only-audio', ['v', BILI_V, '-oa'], 180, ('files', '*.m4a', 500_000)),
     ('bili-video-q1080p',     ['v', BILI_V, '-q', '1080p'], 180, ('files', '*.mp4', 500_000)),
     ('bili-video-codec-hev',  ['v', BILI_V, '--codec', 'hev'], 180, ('files', '*.mp4', 500_000)),
     ('bili-video-anonymous',  ['v', BILI_V, '--cookie', ''], 180, ('files', '*.mp4', 500_000)),

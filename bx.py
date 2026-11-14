@@ -26,7 +26,7 @@
   --subtitle 字幕        B站✅ YouTube✅｜douyin/tiktok/cctv/jable/hanime1 ➖（平台无CC字幕接口）
   --sub-lang 字幕语言    B站✅ YouTube✅（配合--subtitle，如 --sub-lang 中文,en）
   -oa 仅音频             全平台✅（B站取分离音轨；youtube只下音频轨；其余从成品视频提取）
-  --audio-format         全平台✅（配合-oa: aac=原始流, m4a=无损重封装·推荐, mp3=转码）
+  --audio-format         全平台✅ 默认m4a（配合-oa: m4a=无损重封装·时长正确, aac=原始流, mp3=转码）
   -q 画质               B站✅ YouTube✅ CCTV✅｜douyin/tiktok/jable/hanime1 ➖（平台单一画质）
   --codec 编码过滤       B站✅ YouTube✅（avc/hev/vp09）
   --dm 弹幕转ASS         仅B站
@@ -46,7 +46,8 @@
   python bx.py "https://www.tiktok.com/@user/video/xxx"   # TikTok（url自动识别）
   python bx.py v "https://www.youtube.com/watch?v=xxx"    # YouTube（自动选HLS高清）
   python bx.py v "<链接>" --subtitle --sub-lang 中文,en   # 中英文字幕（B站/YouTube）
-  python bx.py v "<链接>" -oa --audio-format m4a          # 仅音频（全平台，m4a时长元数据正确）
+  python bx.py v "<链接>" -oa                             # 仅音频，默认输出m4a（时长元数据正确）
+  python bx.py v "<链接>" -oa --audio-format mp3          # 仅音频转MP3
   python bx.py cate 连载动画 -n 10             # 临时覆盖画质: -q 1080p
   python bx.py doctor                         # 站点健康巡检
 

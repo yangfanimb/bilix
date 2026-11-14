@@ -31,7 +31,7 @@ class BaseDownloaderPart(BaseDownloader):
             logger=None,
             # unique params
             part_concurrency: int = 10,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
     ):
         super(BaseDownloaderPart, self).__init__(
             client=client,

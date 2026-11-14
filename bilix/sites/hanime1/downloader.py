@@ -22,7 +22,7 @@ class DownloaderHanime1(BaseDownloaderM3u8, BaseDownloaderPart):
             logger=None,
             part_concurrency: int = 10,
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
     ):
         self.client = client or httpx.AsyncClient(**api.dft_client_settings)
         super().__init__(

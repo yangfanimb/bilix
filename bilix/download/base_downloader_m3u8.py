@@ -32,7 +32,7 @@ class BaseDownloaderM3u8(BaseDownloader):
             # unique params
             part_concurrency: int = 10,
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
     ):
         super(BaseDownloaderM3u8, self).__init__(
             client=client,

@@ -30,7 +30,7 @@ class DownloaderYoutube(BaseDownloaderM3u8, BaseDownloaderPart):
             part_concurrency: int = 10,
             # unique params
             video_concurrency: Union[int, asyncio.Semaphore] = 3,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
             hierarchy: bool = True,
     ):
         client = client or httpx.AsyncClient(**api.dft_client_settings)

@@ -161,7 +161,7 @@ def print_help():
     )
     table.add_row(
         "--audio-format", '[dark_cyan]aac|m4a|mp3',
-        '仅下载音频(-oa)时的输出格式: aac原始流（默认）、m4a无损重封装（修复时长元数据，推荐）、mp3转码（需ffmpeg带libmp3lame）',
+        '仅下载音频(-oa)时的输出格式，默认m4a无损重封装（时长元数据正确）；aac=原始流；mp3=转码（需ffmpeg带libmp3lame）',
     )
     table.add_row(
         "-sl --speed-limit", '[dark_cyan]str',
@@ -357,7 +357,7 @@ class BasedTimeRange(click.ParamType):
     '--audio-format',
     'audio_format',
     type=click.Choice(['aac', 'm4a', 'mp3'], case_sensitive=False),
-    default='aac',
+    default='m4a',
 )
 @click.option(
     '--fast',

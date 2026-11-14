@@ -121,7 +121,7 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
             stream_retry: int = 5,
             progress: Progress = None,
             logger: logging.Logger = None,
-            audio_format: str = 'aac',
+            audio_format: str = 'm4a',
     ):
         """
 
@@ -129,7 +129,7 @@ class BaseDownloader(metaclass=BaseDownloaderMeta):
         :param browser: load cookies from which browser
         :param speed_limit: global download rate for the downloader, should be a number (Byte/s unit)
         :param progress: progress obj
-        :param audio_format: 仅下载音频(-oa)时的输出格式: aac/m4a/mp3
+        :param audio_format: 仅下载音频(-oa)时的输出格式，默认m4a: aac=原始流, m4a=无损重封装, mp3=转码
         """
         # use cli progress by default
         self.progress = progress or CLIProgress()
